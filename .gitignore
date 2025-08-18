@@ -13,3 +13,4 @@ flib/sim/AMLsim/tmp
 flib/sim/AMLsim/target
 flib/train/federated_learning/results
 old
+!experiments/12_banks_difficult/data/param_files
