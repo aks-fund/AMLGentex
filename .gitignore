@@ -4,7 +4,7 @@ __pycache__
 .venv
 *.egg-info
 .pytest_cache
-experiments
+experiments/*
 *.csv
 *.db
 *.pkl
@@ -13,3 +13,4 @@ flib/sim/AMLsim/tmp
 flib/sim/AMLsim/target
 flib/train/federated_learning/results
 old
+!experiments/12_banks_difficult/data/param_files
