@@ -61,14 +61,6 @@ AMLGentex captures a range of real-world data complexities identified by AML exp
   <em>Figure 1: Expert-assessed severity of key challenges in AML transaction monitoring</em>
 </p>
 
-The framework models multiple sources of noise and complexity:
-
-<p align="center">
-  <img src="assets/images/noise.png" alt="Types of noise in transaction data" width="600">
-  <br>
-  <em>Figure 2: Different noise types affecting AML detection (label noise, feature drift, etc.)</em>
-</p>
-
 ### Key Capabilities
 
 - **Data Generation**: Create realistic synthetic transaction networks with controllable complexity
@@ -129,13 +121,13 @@ jupyter notebook tutorial.ipynb
 
 **Step 1: Generate synthetic data**
 ```bash
-uv run python scripts/generate.py --conf_file experiments/10k_accounts/config/data.yaml
+uv run python scripts/generate.py --conf_file experiments/template_experiment/config/data.yaml
 ```
 
 **Step 2 (Optional): Optimize data generation**
 ```bash
 uv run python scripts/tune_data.py \
-    --experiment_dir experiments/10k_accounts \
+    --experiment_dir experiments/template_experiment \
     --num_trials_data 50 \
     --num_trials_model 100 \
     --model DecisionTreeClassifier
@@ -143,13 +135,13 @@ uv run python scripts/tune_data.py \
 
 **Step 3: Engineer features**
 ```bash
-uv run python scripts/preprocess.py --conf_file experiments/10k_accounts/config/preprocessing.yaml
+uv run python scripts/preprocess.py --conf_file experiments/template_experiment/config/preprocessing.yaml
 ```
 
 **Step 4: Train models**
 ```bash
 uv run python scripts/train.py \
-    --experiment_dir experiments/10k_accounts \
+    --experiment_dir experiments/template_experiment \
     --model DecisionTreeClassifier \
     --training_regime centralized
 ```
@@ -294,29 +286,52 @@ For num_trials_data iterations:
         b. Train model
         c. Evaluate on validation set
     5. Record best model performance for this data configuration
-    6. Compute data quality score (FPR + feature importance error)
+    6. Use operational objective to compute data quality score
 ```
 
-**Objective:** Find data parameters that enable models to:
-1. Achieve a target FPR = 0.01
-2. Minimize feature importance error (correct features should be important)
+#### Three Operational Objectives
 
-**Note:** The optimization framework is flexible and easily adapted to:
-- Different objectives (e.g., maximize recall, minimize false negatives, balance multiple metrics)
-- Different parameters (any parameter in `data.yaml` can be added to `optimisation_bounds`)
-- Custom utility functions for domain-specific requirements
+AMLGentex supports three operational modes for optimization, reflecting real-world AML monitoring constraints:
+
+1. **Alert Budget (K)**: Optimize precision/recall in the top K alerts
+   - Use case: Limited investigation resources
+   - Example: Maximize precision in top 100 alerts
+
+2. **Constrained FPR**: Optimize precision/recall at False Positive Rate ≤ α
+   - Use case: Minimize false alarms while maintaining detection
+   - Example: Maximize recall at FPR ≤ 0.01
+
+3. **Constrained Recall**: Optimize precision/recall at Recall ≥ threshold
+   - Use case: Regulatory requirements for minimum detection rate
+   - Example: Maximize precision at Recall ≥ 0.70
 
 **Configuration:** Search spaces defined in `data.yaml` (`optimisation_bounds`) and `models.yaml` (`optimization.search_space`)
 
-**Usage:**
+**Usage Examples:**
 ```bash
+# Alert budget mode (top K)
 uv run python scripts/tune_data.py \
-    --experiment_dir experiments/10k_accounts \
-    --num_trials_data 50 \
-    --num_trials_model 100 \
-    --model DecisionTreeClassifier \
-    --utility fpr \
-    --seed 0
+    --experiment_dir experiments/template_experiment \
+    --constraint_type K \
+    --constraint_value 100 \
+    --utility_metric precision \
+    --target 0.8
+
+# Constrained FPR mode
+uv run python scripts/tune_data.py \
+    --experiment_dir experiments/template_experiment \
+    --constraint_type fpr \
+    --constraint_value 0.01 \
+    --utility_metric recall \
+    --target 0.7
+
+# Constrained recall mode
+uv run python scripts/tune_data.py \
+    --experiment_dir experiments/template_experiment \
+    --constraint_type recall \
+    --constraint_value 0.7 \
+    --utility_metric precision \
+    --target 0.5
 ```
 
 ---
@@ -329,6 +344,16 @@ Raw transaction logs are transformed into ML-ready features through windowed tem
   <img src="assets/images/blueprint.png" alt="Feature engineering pipeline" width="700">
   <br>
   <em>Figure 10: From spatial graph and transactions to windowed node features for ML models</em>
+</p>
+
+### Real-World Data Challenges
+
+The framework models multiple sources of noise and complexity that affect real AML systems:
+
+<p align="center">
+  <img src="assets/images/noise.png" alt="Types of noise in transaction data" width="600">
+  <br>
+  <em>Figure 11: Different noise types affecting AML detection (label noise, feature drift, etc.)</em>
 </p>
 
 ### Process
@@ -373,19 +398,19 @@ AMLGentex supports training in three regimes with 8 different model types.
 ```bash
 # Centralized
 uv run python scripts/train.py \
-    --experiment_dir experiments/10k_accounts \
+    --experiment_dir experiments/template_experiment \
     --model DecisionTreeClassifier \
     --training_regime centralized
 
 # Federated
 uv run python scripts/train.py \
-    --experiment_dir experiments/10k_accounts \
+    --experiment_dir experiments/template_experiment \
     --model GraphSAGE \
     --training_regime federated
 
 # Isolated
 uv run python scripts/train.py \
-    --experiment_dir experiments/10k_accounts \
+    --experiment_dir experiments/template_experiment \
     --model RandomForestClassifier \
     --training_regime isolated
 ```
@@ -611,7 +636,7 @@ AMLGentex uses auto-discovery to minimize manual configuration:
 from src.utils import find_experiment_root, find_clients
 
 # Automatically find experiment directory
-experiment_root = find_experiment_root("10k_accounts")
+experiment_root = find_experiment_root("template_experiment")
 
 # Auto-discover client data
 clients = find_clients(experiment_root / "preprocessed" / "clients")
