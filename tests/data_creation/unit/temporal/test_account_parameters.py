@@ -3,7 +3,7 @@ Unit tests for Account parameter configuration
 Tests that all config parameters are properly used in temporal simulation
 """
 import pytest
-from src.data_creation.python.temporal_simulation.account import Account
+from src.data_creation.temporal_simulation.account import Account
 
 
 @pytest.mark.unit

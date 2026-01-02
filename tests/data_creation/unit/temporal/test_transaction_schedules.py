@@ -9,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'python'))
 
-from src.data_creation.python.temporal_simulation.alert_patterns import PatternScheduler, AlertPattern
-from src.data_creation.python.temporal_simulation.normal_models import ForwardModel, MutualModel, PeriodicalModel
+from src.data_creation.temporal_simulation.alert_patterns import PatternScheduler, AlertPattern
+from src.data_creation.temporal_simulation.normal_models import ForwardModel, MutualModel, PeriodicalModel
 
 
 @pytest.mark.unit
@@ -266,7 +266,7 @@ class TestForwardModelWithBurstiness:
 
     def test_forward_transaction_ordering(self, sample_account, sample_sar_account):
         """Test ForwardModel maintains proper transaction sequence"""
-        from src.data_creation.python.temporal_simulation.account import Account
+        from src.data_creation.temporal_simulation.account import Account
 
         # Create third account
         account_3 = Account(

@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'python'))
 
-from src.data_creation.python.temporal_simulation.utils import sigmoid, TruncatedNormal
+from src.data_creation.temporal_simulation.utils import sigmoid, TruncatedNormal
 
 
 @pytest.mark.unit

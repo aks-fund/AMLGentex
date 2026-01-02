@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'python'))
 
-from src.data_creation.python.spatial_simulation.utils.nominator import Nominator
+from src.data_creation.spatial_simulation.utils.nominator import Nominator
 
 
 @pytest.fixture

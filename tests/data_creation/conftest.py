@@ -9,9 +9,9 @@ import tempfile
 from pathlib import Path
 
 # Imports from src
-from src.data_creation.python.temporal_simulation.account import Account
-from src.data_creation.python.temporal_simulation.simulator import AMLSimulator
-from src.data_creation.python.spatial_simulation.transaction_graph_generator import TransactionGenerator
+from src.data_creation.temporal_simulation.account import Account
+from src.data_creation.temporal_simulation.simulator import AMLSimulator
+from src.data_creation.spatial_simulation.transaction_graph_generator import TransactionGenerator
 from src.utils.config import load_data_config
 
 

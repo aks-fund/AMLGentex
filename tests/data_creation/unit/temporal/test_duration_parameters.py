@@ -4,7 +4,7 @@ Unit tests for duration parameter conversion (linear to log-space)
 import pytest
 import numpy as np
 
-from src.data_creation.python.temporal_simulation.simulator import AMLSimulator
+from src.data_creation.temporal_simulation.simulator import AMLSimulator
 
 
 @pytest.mark.unit

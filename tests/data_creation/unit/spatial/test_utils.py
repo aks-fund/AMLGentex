@@ -8,8 +8,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'python'))
 
-from src.data_creation.python.spatial_simulation.utils.random_amount import RandomAmount
-from src.data_creation.python.spatial_simulation.utils.rounded_amount import RoundedAmount
+from src.data_creation.spatial_simulation.utils.random_amount import RandomAmount
+from src.data_creation.spatial_simulation.utils.rounded_amount import RoundedAmount
 
 
 @pytest.mark.unit

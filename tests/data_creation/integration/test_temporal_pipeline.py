@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'python'))
 
-from src.data_creation.python.temporal_simulation.simulator import AMLSimulator
+from src.data_creation.temporal_simulation.simulator import AMLSimulator
 
 
 @pytest.mark.integration

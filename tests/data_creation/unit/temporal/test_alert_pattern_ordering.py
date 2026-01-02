@@ -10,8 +10,8 @@ from collections import defaultdict
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'python'))
 
-from src.data_creation.python.temporal_simulation.alert_patterns import AlertPattern
-from src.data_creation.python.temporal_simulation.account import Account
+from src.data_creation.temporal_simulation.alert_patterns import AlertPattern
+from src.data_creation.temporal_simulation.account import Account
 
 
 @pytest.fixture

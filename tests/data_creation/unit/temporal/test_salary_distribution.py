@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'python'))
 
-from src.data_creation.python.temporal_simulation.salary_distribution import SalaryDistribution
+from src.data_creation.temporal_simulation.salary_distribution import SalaryDistribution
 
 
 # Dummy salary data for testing (simulating age groups with different salaries)

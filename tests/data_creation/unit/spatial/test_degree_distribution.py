@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'python'))
 
-from src.data_creation.python.spatial_simulation.generate_scalefree import powerlaw_degree_distrubution
+from src.data_creation.spatial_simulation.generate_scalefree import powerlaw_degree_distrubution
 
 
 @pytest.mark.unit
