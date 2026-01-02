@@ -39,7 +39,7 @@ def generated_transactions(test_data_dir):
 
         # Run the generator
         result = subprocess.run(
-            ["uv", "run", "python", "scripts/generate.py", "--conf_file", str(config_file)],
+            ["python", "scripts/generate.py", "--conf_file", str(config_file)],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parent.parent.parent.parent
