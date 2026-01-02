@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import subprocess
 from pathlib import Path
+from src.utils.pattern_types import SAR_PATTERN_TYPES
 
 # Mark to skip conftest autouse fixture (we generate our own data)
 pytestmark = pytest.mark.usefixtures()
@@ -63,8 +64,22 @@ def alert_transactions(generated_transactions):
 
 
 def get_first_pattern_txs(alert_transactions, pattern_type):
-    """Helper to get transactions for first instance of a pattern type"""
-    patterns = alert_transactions[alert_transactions['modelType'] == pattern_type]
+    """Helper to get transactions for first instance of a pattern type
+
+    Args:
+        alert_transactions: DataFrame of alert transactions
+        pattern_type: Pattern type name string (e.g., 'scatter_gather')
+
+    Returns:
+        DataFrame of transactions for the first instance of this pattern type
+    """
+    # Convert pattern type string to integer ID
+    type_id = SAR_PATTERN_TYPES.get(pattern_type)
+    if type_id is None:
+        return pd.DataFrame()  # Return empty if pattern type not found
+
+    # Filter by integer modelType (use int() to ensure type compatibility with np.int16)
+    patterns = alert_transactions[alert_transactions['modelType'] == int(type_id)]
     if len(patterns) == 0:
         return pd.DataFrame()  # Return empty DataFrame if no patterns found
     first_pattern_id = patterns['patternID'].min()
