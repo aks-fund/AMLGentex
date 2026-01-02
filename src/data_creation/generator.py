@@ -35,7 +35,6 @@ class DataGenerator:
 
         # Get directories
         self.data_creation_dir = Path(__file__).parent
-        self.python_dir = self.data_creation_dir / 'python'
 
         # Get project root (parent of src/)
         self.project_root = self.data_creation_dir.parent.parent
@@ -43,9 +42,9 @@ class DataGenerator:
         # Convert relative paths in config to absolute paths
         self._make_paths_absolute()
 
-        # Add python directory to path for imports
-        if str(self.python_dir) not in sys.path:
-            sys.path.insert(0, str(self.python_dir))
+        # Add data_creation directory to path for imports
+        if str(self.data_creation_dir) not in sys.path:
+            sys.path.insert(0, str(self.data_creation_dir))
 
     def _make_paths_absolute(self):
         """Convert relative paths in config to absolute paths relative to project root"""
