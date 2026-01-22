@@ -48,8 +48,10 @@ class TestDataTunerReproducibility:
             data_config = {
                 'default': {'param1': 1000, 'param2': 0.5},
                 'optimisation_bounds': {
-                    'param1': [500, 2000],
-                    'param2': [0.1, 1.0]
+                    'temporal': {
+                        'param1': [500, 2000],
+                        'param2': [0.1, 1.0]
+                    }
                 },
                 'general': {'random_seed': 999}  # Will be overridden by optimizer
             }
@@ -61,15 +63,17 @@ class TestDataTunerReproducibility:
             seeds_run2 = []
 
             def make_generator(seed_tracker):
-                """Generator that tracks what seed was used"""
-                def generator(config_file_arg=None, spatial=True):
-                    # Use config_path from outer scope if no arg provided
-                    cfg_file = config_file_arg if config_file_arg is not None else config_path
-                    with open(cfg_file, 'r') as f:
+                """Generator mock that tracks what seed was used"""
+                mock_gen = Mock()
+                mock_gen.run_spatial_baseline = Mock()
+                mock_gen.run_spatial_from_baseline = Mock()
+                def run_temporal():
+                    with open(config_path, 'r') as f:
                         cfg = yaml.safe_load(f)
                     seed_tracker.append(cfg['general'].get('random_seed'))
                     return '/tmp/tx_log.parquet'
-                return generator
+                mock_gen.run_temporal = Mock(side_effect=run_temporal)
+                return mock_gen
 
             # Mock preprocessor that returns valid data
             mock_preprocessor = Mock(return_value={
@@ -160,8 +164,10 @@ class TestDataTunerParameterExploration:
             data_config = {
                 'default': {'param1': 1000, 'param2': 0.5},
                 'optimisation_bounds': {
-                    'param1': [500, 2000],
-                    'param2': [0.1, 1.0]
+                    'temporal': {
+                        'param1': [500, 2000],
+                        'param2': [0.1, 1.0]
+                    }
                 },
                 'general': {}
             }
@@ -171,16 +177,19 @@ class TestDataTunerParameterExploration:
             # Track parameter values used in each trial
             trial_params = []
 
-            def tracking_generator(config_file_arg=None, spatial=True):
-                """Generator that tracks parameter values"""
-                cfg_file = config_file_arg if config_file_arg is not None else config_path
-                with open(cfg_file, 'r') as f:
+            # Create mock generator with required methods
+            tracking_generator = Mock()
+            tracking_generator.run_spatial_baseline = Mock()
+            tracking_generator.run_spatial_from_baseline = Mock()
+            def run_temporal():
+                with open(config_path, 'r') as f:
                     cfg = yaml.safe_load(f)
                 trial_params.append({
                     'param1': cfg['default']['param1'],
                     'param2': cfg['default']['param2']
                 })
                 return '/tmp/tx_log.parquet'
+            tracking_generator.run_temporal = Mock(side_effect=run_temporal)
 
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({
@@ -253,8 +262,10 @@ class TestDataTunerParameterExploration:
             data_config = {
                 'default': {'param1': 1000, 'param2': 0.5},
                 'optimisation_bounds': {
-                    'param1': [500, 2000],
-                    'param2': [0.1, 1.0]
+                    'temporal': {
+                        'param1': [500, 2000],
+                        'param2': [0.1, 1.0]
+                    }
                 },
                 'general': {}
             }
@@ -265,16 +276,20 @@ class TestDataTunerParameterExploration:
             params_seed999 = []
 
             def make_tracking_generator(param_tracker):
-                def generator(config_file_arg=None, spatial=True):
-                    cfg_file = config_file_arg if config_file_arg is not None else config_path
-                    with open(cfg_file, 'r') as f:
+                """Generator mock that tracks parameters"""
+                mock_gen = Mock()
+                mock_gen.run_spatial_baseline = Mock()
+                mock_gen.run_spatial_from_baseline = Mock()
+                def run_temporal():
+                    with open(config_path, 'r') as f:
                         cfg = yaml.safe_load(f)
                     param_tracker.append({
                         'param1': cfg['default']['param1'],
                         'param2': cfg['default']['param2']
                     })
                     return '/tmp/tx_log.parquet'
-                return generator
+                mock_gen.run_temporal = Mock(side_effect=run_temporal)
+                return mock_gen
 
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({
@@ -362,7 +377,7 @@ class TestDataTunerResultsQuality:
             config_path = Path(tmpdir) / 'data_config.yaml'
             data_config = {
                 'default': {'param1': 1000},
-                'optimisation_bounds': {'param1': [500, 2000]},
+                'optimisation_bounds': {'temporal': {'param1': [500, 2000]}},
                 'general': {}
             }
             with open(config_path, 'w') as f:
@@ -431,7 +446,7 @@ class TestDataTunerResultsQuality:
             config_path = Path(tmpdir) / 'data_config.yaml'
             data_config = {
                 'default': {'param1': 1000},
-                'optimisation_bounds': {'param1': [500, 2000]},
+                'optimisation_bounds': {'temporal': {'param1': [500, 2000]}},
                 'general': {}
             }
             with open(config_path, 'w') as f:

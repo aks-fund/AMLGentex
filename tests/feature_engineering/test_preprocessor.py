@@ -65,8 +65,8 @@ class TestLoadData:
         preprocessor = DataPreprocessor(basic_preprocessor_config)
         df = preprocessor.load_data(temp_parquet_file)
 
-        dropped_columns = ['type', 'oldbalanceOrig', 'oldbalanceDest',
-                           'newbalanceOrig', 'newbalanceDest', 'patternID', 'modelType']
+        # Balance columns are now kept for balance_at_window_start feature
+        dropped_columns = ['type', 'patternID', 'modelType']
 
         for col in dropped_columns:
             assert col not in df.columns

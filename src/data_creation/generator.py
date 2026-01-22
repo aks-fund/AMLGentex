@@ -121,7 +121,8 @@ class DataGenerator:
                 print(f"  [2/3] Generating transaction graph...")
             start = time.time()
             # Call directly with config dict (has absolute paths)
-            txgraph.generate_transaction_graph_from_config(self.config)
+            # Pass verbose to enable diagnostic plots when verbose=True
+            txgraph.generate_transaction_graph_from_config(self.config, verbose=self.verbose)
             if self.verbose:
                 print(f"        Complete ({time.time() - start:.2f}s)")
 
@@ -206,6 +207,133 @@ class DataGenerator:
         finally:
             # Restore original working directory
             os.chdir(orig_cwd)
+
+    def run_spatial_baseline(self, force=False):
+        """
+        Run spatial simulation Phase 1: Generate baseline and save checkpoint.
+
+        Creates the transaction graph up to demographics assignment and saves a checkpoint.
+        This baseline can then be used for multiple alert injection trials with different
+        ML selector configurations via run_spatial_from_baseline().
+
+        Args:
+            force: If True, regenerate even if checkpoint exists
+
+        Returns:
+            Path to the saved checkpoint file
+        """
+        import spatial_simulation.generate_scalefree as generate_scalefree
+        import spatial_simulation.transaction_graph_generator as txgraph
+
+        sim_name = self.config['general']['simulation_name']
+        input_dir = self.config['input']['directory']
+        degree_file = self.config['input']['degree']
+
+        # Checkpoint path
+        checkpoint_path = Path(input_dir) / 'baseline_checkpoint.pkl'
+
+        # Check if checkpoint already exists
+        if checkpoint_path.exists() and not force:
+            if self.verbose:
+                print(f"Baseline checkpoint found: {checkpoint_path}")
+                print("Skipping baseline generation (use force=True to regenerate)")
+            return str(checkpoint_path)
+
+        if self.verbose:
+            print("Running spatial baseline generation (Phase 1)...")
+
+        # Save original working directory and argv
+        orig_cwd = os.getcwd()
+        orig_argv = sys.argv.copy()
+
+        try:
+            # Change to data_creation directory for simulation
+            os.chdir(self.data_creation_dir)
+
+            # Step 1: Generate degree distribution if needed
+            degree_path = Path(input_dir) / degree_file
+            if not degree_path.exists():
+                if self.verbose:
+                    print(f"  [1/2] Generating degree distribution...")
+                start = time.time()
+                generate_scalefree.generate_degree_file_from_config(self.config)
+                if self.verbose:
+                    print(f"        Complete ({time.time() - start:.2f}s)")
+            else:
+                if self.verbose:
+                    print(f"  [1/2] Degree distribution found: {degree_path}")
+
+            # Step 2: Generate baseline (stops before alert injection)
+            if self.verbose:
+                print(f"  [2/2] Generating baseline graph...")
+            start = time.time()
+            saved_path = txgraph.generate_baseline(self.config, checkpoint_path=str(checkpoint_path))
+            if self.verbose:
+                print(f"        Complete ({time.time() - start:.2f}s)")
+                print(f"        Checkpoint saved to: {saved_path}")
+
+        finally:
+            # Restore original state
+            os.chdir(orig_cwd)
+            sys.argv = orig_argv
+
+        return str(checkpoint_path)
+
+    def run_spatial_from_baseline(self, checkpoint_path=None):
+        """
+        Run spatial simulation Phase 2: Inject alerts from baseline checkpoint.
+
+        Loads a previously saved baseline and injects alert patterns using the ML selector
+        configuration from the current config. This allows testing different ML selection
+        parameters without regenerating the entire graph.
+
+        Args:
+            checkpoint_path: Path to baseline checkpoint. If None, uses default location.
+
+        Returns:
+            Path to the spatial simulation output directory
+        """
+        import spatial_simulation.transaction_graph_generator as txgraph
+
+        input_dir = self.config['input']['directory']
+
+        # Default checkpoint path
+        if checkpoint_path is None:
+            checkpoint_path = Path(input_dir) / 'baseline_checkpoint.pkl'
+
+        if not Path(checkpoint_path).exists():
+            raise FileNotFoundError(
+                f"Baseline checkpoint not found: {checkpoint_path}\n"
+                "Run run_spatial_baseline() first to generate the baseline."
+            )
+
+        # Get spatial output directory from config (already absolute)
+        spatial_output = Path(self.config['temporal']['directory'])
+
+        if self.verbose:
+            print("Running alert injection from baseline (Phase 2)...")
+
+        # Save original working directory
+        orig_cwd = os.getcwd()
+
+        try:
+            # Change to data_creation directory for simulation
+            os.chdir(self.data_creation_dir)
+
+            start = time.time()
+            txgraph.inject_alerts_from_baseline(
+                self.config,
+                checkpoint_path=str(checkpoint_path),
+                verbose=self.verbose
+            )
+            if self.verbose:
+                print(f"        Complete ({time.time() - start:.2f}s)")
+
+        finally:
+            # Restore original state
+            os.chdir(orig_cwd)
+
+        return str(spatial_output)
 
     def __call__(self, spatial=True, force_spatial=False):
         """

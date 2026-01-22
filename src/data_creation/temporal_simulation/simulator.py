@@ -113,7 +113,9 @@ class AMLSimulator:
                 is_sar=row['IS_SAR'],
                 bank_id=row['BANK_ID'],
                 random_state=self.random_seed + row['ACCOUNT_ID'],  # Unique seed per account
-                n_steps_balance_history=default_conf.get('n_steps_balance_history', 28)
+                n_steps_balance_history=default_conf.get('n_steps_balance_history', 28),
+                salary=row['SALARY'],  # Monthly salary from demographics
+                age=row['AGE']  # Age from demographics
             )
 
             # Set behavior parameters

@@ -30,7 +30,6 @@ LogisticRegressor:
     optimizer: Adam
     criterion: BCEWithLogitsLoss
     lr: 0.001
-    input_dim: 94
     output_dim: 1
   search_space:
     lr: {type: float, low: 0.00001, high: 0.01, log: true}
@@ -52,7 +51,6 @@ MLP:
     criterion: BCEWithLogitsLoss
     lr: 0.001
     weight_decay: 0.1
-    input_dim: 94
     n_hidden_layers: 3
     hidden_dim: 100
     output_dim: 1
@@ -78,7 +76,6 @@ GCN:
     criterion: BCEWithLogitsLoss
     lr: 0.0001
     dropout: 0.9
-    input_dim: 94
     n_conv_layers: 3
     hidden_dim: 100
     output_dim: 1
@@ -104,7 +101,6 @@ GAT:
     criterion: BCEWithLogitsLoss
     lr: 0.0001
     dropout: 0.9
-    input_dim: 94
     n_conv_layers: 3
     hidden_dim: 100
     output_dim: 1
@@ -130,7 +126,6 @@ GraphSAGE:
     criterion: BCEWithLogitsLoss
     lr: 0.0001
     dropout: 0.9
-    input_dim: 94
     n_conv_layers: 3
     hidden_dim: 100
     output_dim: 1

@@ -61,7 +61,9 @@ def sample_account():
         initial_balance=10000.0,
         is_sar=False,
         bank_id='BANK001',
-        random_state=42
+        random_state=42,
+        salary=25000.0,  # Monthly salary from demographics
+        age=35
     )
 
 
@@ -74,7 +76,9 @@ def sample_sar_account():
         initial_balance=50000.0,
         is_sar=True,
         bank_id='BANK001',
-        random_state=42
+        random_state=42,
+        salary=30000.0,  # Monthly salary from demographics
+        age=40
     )
 
 
@@ -157,6 +161,8 @@ def generate_test_data(request):
             txg.load_normal_models()
             txg.build_normal_models()
             txg.set_main_acct_candidates()
+            txg.assign_demographics()  # Required for init_balance
+            txg.prepare_money_laundering_selector()  # Prepare ML selector if enabled
             txg.load_alert_patterns()
             txg.mark_active_edges()
 
@@ -226,8 +232,13 @@ class TransactionGraphFixture:
         self.txg.load_normal_models()
         self.txg.build_normal_models()
 
+        # Demographics required for init_balance
+        self.txg.set_main_acct_candidates()
+        self.txg.assign_demographics()
+
         if not clean:
-            self.txg.set_main_acct_candidates()
+            # Prepare ML selector if enabled (must be before load_alert_patterns)
+            self.txg.prepare_money_laundering_selector()
             self.txg.load_alert_patterns()
             self.txg.mark_active_edges()
 

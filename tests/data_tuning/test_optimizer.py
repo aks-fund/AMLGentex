@@ -93,15 +93,19 @@ class TestOptimizerObjective:
             data_config = {
                 'default': {'mean_amount': 1000, 'std_amount': 200},
                 'optimisation_bounds': {
-                    'mean_amount': [500, 2000],
-                    'std_amount': [100, 500]
+                    'temporal': {
+                        'mean_amount': [500, 2000],
+                        'std_amount': [100, 500]
+                    }
                 },
                 'general': {}
             }
             with open(config_path, 'w') as f:
                 yaml.dump(data_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1, 2], 'bank': ['BANK001', 'BANK001'], 'is_sar': [0, 1]}),
                 'trainset_edges': pd.DataFrame({'src': [1], 'dst': [2]}),
@@ -164,13 +168,15 @@ class TestOptimizerObjective:
             config_path = Path(tmpdir) / 'config.yaml'
             data_config = {
                 'default': {'mean_amount': 1000},
-                'optimisation_bounds': {'mean_amount': [500, 2000]},
+                'optimisation_bounds': {'temporal': {'mean_amount': [500, 2000]}},
                 'general': {}
             }
             with open(config_path, 'w') as f:
                 yaml.dump(data_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
                 'trainset_edges': pd.DataFrame({'src': [1], 'dst': [1]}),
@@ -235,7 +241,9 @@ class TestOptimizerObjective:
             with open(config_path, 'w') as f:
                 yaml.dump(data_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
                 'trainset_edges': pd.DataFrame(columns=['src', 'dst']),
@@ -281,8 +289,9 @@ class TestOptimizerObjective:
 
                 optimizer.objective(mock_trial)
 
-            # Verify generator was called
-            mock_generator.assert_called_once()
+            # Verify two-phase generation was called
+            mock_generator.run_spatial_from_baseline.assert_called_once()
+            mock_generator.run_temporal.assert_called_once()
 
     def test_objective_calls_preprocessor(self):
         """Test that objective calls the preprocessor"""
@@ -297,7 +306,9 @@ class TestOptimizerObjective:
                 yaml.dump(data_config, f)
 
             tx_log_path = '/tmp/tx_log.parquet'
-            mock_generator = Mock(return_value=tx_log_path)
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value=tx_log_path)
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
                 'trainset_edges': pd.DataFrame(columns=['src', 'dst']),
@@ -512,13 +523,15 @@ class TestOptimizerBoundTypes:
             config_path = Path(tmpdir) / 'config.yaml'
             data_config = {
                 'default': {'num_accounts': 1000},
-                'optimisation_bounds': {'num_accounts': [500, 2000]},  # Integer bounds
+                'optimisation_bounds': {'temporal': {'num_accounts': [500, 2000]}},  # Integer bounds
                 'general': {}
             }
             with open(config_path, 'w') as f:
                 yaml.dump(data_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
                 'trainset_edges': pd.DataFrame(columns=['src', 'dst']),
@@ -567,7 +580,7 @@ class TestOptimizerBoundTypes:
                 optimizer.objective(mock_trial)
 
             # Verify suggest_int was called
-            mock_trial.suggest_int.assert_called_once_with('num_accounts', 500, 2000)
+            mock_trial.suggest_int.assert_called_once_with('temporal.num_accounts', 500, 2000)
 
     def test_objective_handles_float_bounds(self):
         """Test that objective correctly handles float bounds"""
@@ -575,13 +588,15 @@ class TestOptimizerBoundTypes:
             config_path = Path(tmpdir) / 'config.yaml'
             data_config = {
                 'default': {'learning_rate': 0.1},
-                'optimisation_bounds': {'learning_rate': [0.001, 0.5]},  # Float bounds
+                'optimisation_bounds': {'temporal': {'learning_rate': [0.001, 0.5]}},  # Float bounds
                 'general': {}
             }
             with open(config_path, 'w') as f:
                 yaml.dump(data_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
                 'trainset_edges': pd.DataFrame(columns=['src', 'dst']),
@@ -630,7 +645,7 @@ class TestOptimizerBoundTypes:
                 optimizer.objective(mock_trial)
 
             # Verify suggest_float was called
-            mock_trial.suggest_float.assert_called_once_with('learning_rate', 0.001, 0.5)
+            mock_trial.suggest_float.assert_called_once_with('temporal.learning_rate', 0.001, 0.5)
 
 
 @pytest.mark.unit
@@ -644,15 +659,19 @@ class TestOptimizerReproducibility:
             data_config = {
                 'default': {'mean_amount': 1000, 'std_amount': 200},
                 'optimisation_bounds': {
-                    'mean_amount': [500, 2000],
-                    'std_amount': [100, 500]
+                    'temporal': {
+                        'mean_amount': [500, 2000],
+                        'std_amount': [100, 500]
+                    }
                 },
                 'general': {}
             }
             with open(config_path, 'w') as f:
                 yaml.dump(data_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1, 2], 'bank': ['BANK001', 'BANK001'], 'is_sar': [0, 1]}),
                 'trainset_edges': pd.DataFrame({'src': [1], 'dst': [2]}),
@@ -732,15 +751,19 @@ class TestOptimizerReproducibility:
             data_config = {
                 'default': {'mean_amount': 1000, 'std_amount': 200},
                 'optimisation_bounds': {
-                    'mean_amount': [500, 2000],
-                    'std_amount': [100, 500]
+                    'temporal': {
+                        'mean_amount': [500, 2000],
+                        'std_amount': [100, 500]
+                    }
                 },
                 'general': {}
             }
             with open(config_path, 'w') as f:
                 yaml.dump(data_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1, 2], 'bank': ['BANK001', 'BANK001'], 'is_sar': [0, 1]}),
                 'trainset_edges': pd.DataFrame({'src': [1], 'dst': [2]}),
@@ -793,11 +816,13 @@ class TestOptimizerReproducibility:
             def make_objective_tracker(params_list):
                 def tracked_objective(trial):
                     suggested = {}
-                    for k, v in data_config['optimisation_bounds'].items():
+                    # Iterate over temporal section (nested structure)
+                    for k, v in data_config['optimisation_bounds']['temporal'].items():
+                        key_path = f'temporal.{k}'
                         if isinstance(v[0], int):
-                            suggested[k] = trial.suggest_int(k, v[0], v[1])
+                            suggested[key_path] = trial.suggest_int(key_path, v[0], v[1])
                         else:
-                            suggested[k] = trial.suggest_float(k, v[0], v[1])
+                            suggested[key_path] = trial.suggest_float(key_path, v[0], v[1])
                     params_list.append(suggested)
                     return 0.0, 0.0
                 return tracked_objective
@@ -827,13 +852,15 @@ class TestOptimizerReproducibility:
             config_path = Path(tmpdir) / 'config.yaml'
             data_config = {
                 'default': {'mean_amount': 1000},
-                'optimisation_bounds': {'mean_amount': [500, 2000]},
+                'optimisation_bounds': {'temporal': {'mean_amount': [500, 2000]}},
                 'general': {'random_seed': 999}
             }
             with open(config_path, 'w') as f:
                 yaml.dump(data_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
                 'trainset_edges': pd.DataFrame(columns=['src', 'dst']),
@@ -899,15 +926,19 @@ class TestOptimizerParameterUpdates:
             data_config = {
                 'default': {'mean_amount': 1000, 'std_amount': 200},
                 'optimisation_bounds': {
-                    'mean_amount': [500, 2000],
-                    'std_amount': [100, 500]
+                    'temporal': {
+                        'mean_amount': [500, 2000],
+                        'std_amount': [100, 500]
+                    }
                 },
                 'general': {}
             }
             with open(config_path, 'w') as f:
                 yaml.dump(data_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1, 2], 'bank': ['BANK001', 'BANK001'], 'is_sar': [0, 1]}),
                 'trainset_edges': pd.DataFrame({'src': [1], 'dst': [2]}),
@@ -945,11 +976,13 @@ class TestOptimizerParameterUpdates:
 
             def track_objective(trial):
                 suggested = {}
-                for k, v in data_config['optimisation_bounds'].items():
+                # Iterate over temporal section (nested structure)
+                for k, v in data_config['optimisation_bounds']['temporal'].items():
+                    key_path = f'temporal.{k}'
                     if isinstance(v[0], int):
-                        suggested[k] = trial.suggest_int(k, v[0], v[1])
+                        suggested[k] = trial.suggest_int(key_path, v[0], v[1])
                     else:
-                        suggested[k] = trial.suggest_float(k, v[0], v[1])
+                        suggested[k] = trial.suggest_float(key_path, v[0], v[1])
                 trial_params.append(suggested)
                 # Return varying objectives to simulate exploration
                 return abs(suggested['mean_amount'] - 1200) / 1000, abs(suggested['std_amount'] - 300) / 100
@@ -981,15 +1014,19 @@ class TestOptimizerParameterUpdates:
             initial_config = {
                 'default': {'learning_rate': 0.1, 'num_epochs': 10},
                 'optimisation_bounds': {
-                    'learning_rate': [0.01, 0.5],
-                    'num_epochs': [5, 20]
+                    'temporal': {
+                        'learning_rate': [0.01, 0.5],
+                        'num_epochs': [5, 20]
+                    }
                 },
                 'general': {}
             }
             with open(config_path, 'w') as f:
                 yaml.dump(initial_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
                 'trainset_edges': pd.DataFrame(columns=['src', 'dst']),
@@ -1057,15 +1094,19 @@ class TestOptimizerUpdateConfigWithTrial:
             data_config = {
                 'default': {'param1': 100, 'param2': 0.5},
                 'optimisation_bounds': {
-                    'param1': [50, 200],
-                    'param2': [0.1, 1.0]
+                    'temporal': {
+                        'param1': [50, 200],
+                        'param2': [0.1, 1.0]
+                    }
                 },
                 'general': {}
             }
             with open(config_path, 'w') as f:
                 yaml.dump(data_config, f)
 
-            mock_generator = Mock(return_value='/tmp/tx_log.parquet')
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
             mock_preprocessor = Mock(return_value={
                 'trainset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
                 'trainset_edges': pd.DataFrame(columns=['src', 'dst']),

@@ -20,7 +20,9 @@ class TestAccountParameters:
             initial_balance=10000.0,
             is_sar=False,
             bank_id='BANK001',
-            random_state=42
+            random_state=42,
+            salary=25000.0,
+            age=35
         )
         assert account_default.balance_history.maxlen == 28, "Default should be 28"
 
@@ -32,7 +34,9 @@ class TestAccountParameters:
             is_sar=False,
             bank_id='BANK001',
             random_state=42,
-            n_steps_balance_history=14
+            n_steps_balance_history=14,
+            salary=25000.0,
+            age=35
         )
         assert account_custom.balance_history.maxlen == 14, "Should use custom value"
 
@@ -44,7 +48,9 @@ class TestAccountParameters:
             initial_balance=10000.0,
             is_sar=False,
             bank_id='BANK001',
-            random_state=42
+            random_state=42,
+            salary=25000.0,
+            age=35
         )
 
         account.set_parameters(
@@ -83,7 +89,9 @@ class TestAccountParameters:
             initial_balance=10000.0,
             is_sar=True,
             bank_id='BANK001',
-            random_state=42
+            random_state=42,
+            salary=25000.0,
+            age=35
         )
 
         account.set_parameters(
@@ -122,7 +130,9 @@ class TestAccountParameters:
             initial_balance=10000.0,
             is_sar=False,
             bank_id='BANK001',
-            random_state=42
+            random_state=42,
+            salary=25000.0,
+            age=35
         )
 
         account.set_parameters(
@@ -161,7 +171,9 @@ class TestAccountParameters:
             initial_balance=10000.0,
             is_sar=False,
             bank_id='BANK001',
-            random_state=42
+            random_state=42,
+            salary=25000.0,
+            age=35
         )
 
         account.set_parameters(
@@ -205,7 +217,9 @@ class TestAccountParameters:
             initial_balance=10000.0,
             is_sar=False,
             bank_id='BANK001',
-            random_state=42
+            random_state=42,
+            salary=25000.0,
+            age=35
         )
 
         account.set_parameters(
@@ -253,7 +267,9 @@ class TestAccountParameters:
             initial_balance=10000.0,
             is_sar=False,
             bank_id='BANK001',
-            random_state=42
+            random_state=42,
+            salary=25000.0,
+            age=35
         )
 
         account.set_parameters(
@@ -308,7 +324,9 @@ class TestAccountParameters:
             initial_balance=10000.0,
             is_sar=False,
             bank_id='BANK001',
-            random_state=42
+            random_state=42,
+            salary=25000.0,
+            age=35
         )
 
         account.set_parameters(

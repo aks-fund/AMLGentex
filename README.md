@@ -189,6 +189,59 @@ AMLGentex generates scale-free networks where node degree follows a power-law di
   <em>Figure 5: From degree distribution blueprint to final spatial graph with injected patterns</em>
 </p>
 
+#### 4. ML Account Selection
+
+When injecting alert patterns, AMLGentex uses a weighted selection system to choose which accounts participate in money laundering. This creates realistic patterns where structurally important accounts (hubs, bridges) are more likely to be involved.
+
+**Selection Weights** combine three components:
+
+| Component | What it measures | ML Rationale |
+|-----------|------------------|--------------|
+| **Degree** | Number of connections | Hub accounts have more layering opportunities |
+| **Betweenness** | Bridge between communities | Good for laundering through "neutral" middlemen |
+| **PageRank** | Importance from incoming links | Collection points in gather/fan-in patterns |
+| **KYC attributes** | Balance, salary, age | Bias selection based on account demographics (configurable) |
+| **Locality (PPR)** | Geographic clustering | Real ML networks often cluster geographically |
+
+**Participation Decay** prevents a few high-weight accounts from dominating all patterns. After each selection, an account's weight is multiplied by the decay factor:
+
+| Decay Value | Effect | Typical Max Participations |
+|-------------|--------|---------------------------|
+| 0.1 | Aggressive | ~2-3 patterns |
+| 0.3 (default) | Moderate | ~3-4 patterns |
+| 0.5 | Mild | ~5-6 patterns |
+| 1.0 | None | Unlimited (high-weight accounts dominate) |
+
+**Configuration** in `data.yaml`:
+
+```yaml
+ml_selector:
+  # Structural weights (should sum to ~1.0)
+  structure_weights:
+    degree: 0.4       # Hub accounts
+    betweenness: 0.2  # Bridge accounts (highly skewed - use lower values)
+    pagerank: 0.4     # Important accounts
+
+  # KYC weights (0 ignores the attribute, >0 favors higher values)
+  kyc_weights:
+    init_balance: 0.1  # >0 favors higher balances, 0 ignores
+    salary: 0.0        # >0 would favor higher income, 0 ignores
+    age: 0.0           # >0 would favor older holders, 0 ignores
+
+  # Geographic clustering
+  propagation_weights:
+    city: 0.5          # 0.0 = no clustering, 1.0 = strong clustering
+
+  # Participation limits
+  participation_decay: 0.3  # Lower = fewer repeat participants
+```
+
+**Tuning Tips:**
+- If one account appears in too many patterns: lower `participation_decay` or reduce `betweenness` weight
+- If patterns are too spread out: increase `participation_decay` toward 0.5
+- If you want geographic clusters: increase `propagation_weights.city`
+- Betweenness is highly skewed (few nodes dominate) - keep weight low (0.1-0.2)
+
 **Configuration:** Spatial graph generation is controlled by `experiments/<name>/config/data.yaml` and CSV files defining:
 - `accounts.csv` - Account properties (balance, bank, country)
 - `degree.csv` - Degree distribution blueprint (auto-generated from `scale-free` parameters if not present)
@@ -362,13 +415,7 @@ The framework models multiple sources of noise and complexity that affect real A
    - `window_len` - Window size in days (e.g., 28 days)
    - `num_windows` - Number of windows (e.g., 4)
 
-2. **Feature Aggregation:** For each window, compute per-account features:
-   - Transaction counts (sent, received)
-   - Transaction volumes (total amount sent/received)
-   - Network features (in-degree, out-degree)
-   - Balance statistics (mean, std, min, max)
-   - Phone/bank change frequency
-   - Cash usage indicators
+2. **Feature Aggregation:** For each window, compute per-account features (see Feature Reference below)
 
 3. **Learning Mode:** Explicit flag for **transductive** vs **inductive** learning
 
@@ -409,6 +456,109 @@ The framework models multiple sources of noise and complexity that affect real A
 **Configuration:** `experiments/<name>/config/preprocessing.yaml`
 
 **Output:** Preprocessed features saved to `experiments/<name>/preprocessed/`
+
+### Feature Reference
+
+The preprocessor generates **W × 46 + 8 + (6 if W > 1)** features per node, where W = number of windows.
+
+| Windows | Total Features |
+|---------|---------------|
+| 1 | 54 |
+| 2 | 106 |
+| 3 | 152 |
+| 4 | 198 |
+
+#### Identifiers & Labels (3)
+| Feature | Type | Description |
+|---------|------|-------------|
+| `account` | int | Account ID |
+| `bank` | categorical | Bank identifier |
+| `is_sar` | int | Label (0=normal, 1=suspicious) |
+
+#### Static Features (3)
+Loaded from `spatial/accounts.csv`:
+
+| Feature | Type | Description |
+|---------|------|-------------|
+| `age` | int | Account holder age |
+| `salary` | float | Account holder salary |
+| `city` | categorical | Geographic location |
+
+#### Per-Window Features (46 per window)
+
+**Balance (1):**
+| Feature | Description |
+|---------|-------------|
+| `balance_at_start_{w}` | Account balance at window start |
+
+**Spending - to sink (7):**
+| Feature | Description |
+|---------|-------------|
+| `sums_spending_{w}` | Total spending amount |
+| `means_spending_{w}` | Mean spending per transaction |
+| `medians_spending_{w}` | Median spending |
+| `stds_spending_{w}` | Spending standard deviation |
+| `maxs_spending_{w}` | Maximum single spending |
+| `mins_spending_{w}` | Minimum single spending |
+| `counts_spending_{w}` | Number of spending transactions |
+
+**Incoming Transactions (8):**
+| Feature | Description |
+|---------|-------------|
+| `sum_in_{w}` | Total incoming amount |
+| `mean_in_{w}` | Mean incoming per transaction |
+| `median_in_{w}` | Median incoming |
+| `std_in_{w}` | Incoming standard deviation |
+| `max_in_{w}` | Maximum single incoming |
+| `min_in_{w}` | Minimum single incoming |
+| `count_in_{w}` | Number of incoming transactions |
+| `count_unique_in_{w}` | Unique senders (in-degree) |
+
+**Outgoing Transactions (8):**
+| Feature | Description |
+|---------|-------------|
+| `sum_out_{w}` | Total outgoing amount |
+| `mean_out_{w}` | Mean outgoing per transaction |
+| `median_out_{w}` | Median outgoing |
+| `std_out_{w}` | Outgoing standard deviation |
+| `max_out_{w}` | Maximum single outgoing |
+| `min_out_{w}` | Minimum single outgoing |
+| `count_out_{w}` | Number of outgoing transactions |
+| `count_unique_out_{w}` | Unique receivers (out-degree) |
+
+**Timing Features (11 per direction × 2 = 22):**
+
+For both incoming (`_in_`) and outgoing (`_out_`):
+
+| Feature | Range | Description |
+|---------|-------|-------------|
+| `first_step_{dir}_{w}` | ≥0 | Time of first transaction |
+| `last_step_{dir}_{w}` | ≥0 | Time of last transaction |
+| `time_span_{dir}_{w}` | ≥0 | Duration (last - first) |
+| `time_std_{dir}_{w}` | ≥0 | Std dev of transaction times |
+| `time_skew_{dir}_{w}` | any | Skewness (+ve = late clustering) |
+| `burstiness_{dir}_{w}` | [-1, 1] | Burstiness coefficient |
+| `mean_gap_{dir}_{w}` | ≥0 | Mean time between transactions |
+| `median_gap_{dir}_{w}` | ≥0 | Median gap |
+| `std_gap_{dir}_{w}` | ≥0 | Gap standard deviation |
+| `max_gap_{dir}_{w}` | ≥0 | Longest gap |
+| `min_gap_{dir}_{w}` | ≥0 | Shortest gap |
+
+#### Inter-Window Features (6, only if W > 1)
+| Feature | Description |
+|---------|-------------|
+| `n_active_windows_in` | Windows with incoming activity |
+| `n_active_windows_out` | Windows with outgoing activity |
+| `window_activity_cv_in` | Coefficient of variation (incoming) |
+| `window_activity_cv_out` | Coefficient of variation (outgoing) |
+| `volume_trend_in` | Activity trend over time (incoming) |
+| `volume_trend_out` | Activity trend over time (outgoing) |
+
+#### Global Features (2)
+| Feature | Description |
+|---------|-------------|
+| `counts_days_in_bank` | Days account has been with bank |
+| `counts_phone_changes` | Number of phone number changes |
 
 ---
 

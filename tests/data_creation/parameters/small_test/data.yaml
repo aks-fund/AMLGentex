@@ -67,3 +67,13 @@ scale-free:
   gamma: 2.0
   loc: 1.0
   average_degree: 2.0
+
+ml_selector:
+
+demographics:
+  csv_path: demographics.csv
+  balance_params:
+    balance_months: 2.5
+    alpha_salary: 0.6
+    alpha_struct: 0.4
+    sigma: 0.5

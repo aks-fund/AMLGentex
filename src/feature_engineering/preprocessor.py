@@ -3,84 +3,120 @@ import numpy as np
 from scipy import stats
 
 
-def _calc_timing_agg(steps: pd.Series) -> pd.Series:
-    """
-    Calculate timing distribution features for a group of transactions.
+# Feature names for timing calculations
+TIMING_FEATURES = ['first_step', 'last_step', 'time_span', 'time_std', 'time_skew', 'burstiness']
+GAP_FEATURES = ['mean_gap', 'median_gap', 'std_gap', 'max_gap', 'min_gap']
+ALL_TIMING_FEATURES = TIMING_FEATURES + GAP_FEATURES
 
-    Returns Series with:
+
+def _calc_all_timing_features(steps: pd.Series) -> pd.Series:
+    """
+    Calculate all timing distribution and gap features in a single pass.
+
+    Combines timing and gap calculations to avoid redundant sorting.
+
+    Returns Series with 11 features:
+    Timing features:
     - first_step: time of first transaction
     - last_step: time of last transaction
     - time_span: range between first and last
     - time_std: standard deviation of transaction times
     - time_skew: skewness (positive = clustered late, negative = clustered early)
-    - burstiness: measure of temporal concentration (0 = evenly distributed, 1 = all at once)
-    """
-    vals = steps.values
-    n = len(vals)
+    - burstiness: temporal concentration, ranges -1 to 1
+      (-1 = perfectly regular, 0 = random/Poisson, +1 = maximally bursty)
 
-    if n == 0:
-        return pd.Series({
-            'first_step': np.nan, 'last_step': np.nan, 'time_span': np.nan,
-            'time_std': np.nan, 'time_skew': np.nan, 'burstiness': np.nan,
-        })
-
-    first_step = vals.min()
-    last_step = vals.max()
-    time_span = last_step - first_step
-
-    if n == 1:
-        return pd.Series({
-            'first_step': first_step, 'last_step': last_step, 'time_span': 0.0,
-            'time_std': 0.0, 'time_skew': 0.0, 'burstiness': 1.0,
-        })
-
-    time_std = np.std(vals)
-    time_skew = stats.skew(vals) if time_std > 0 else 0.0
-
-    # Burstiness: B = (std - mean) / (std + mean), ranges from -1 to 1
-    sorted_vals = np.sort(vals)
-    gaps = np.diff(sorted_vals)
-    if len(gaps) > 0 and gaps.mean() > 0:
-        gap_std = gaps.std()
-        gap_mean = gaps.mean()
-        burstiness = (gap_std - gap_mean) / (gap_std + gap_mean) if (gap_std + gap_mean) > 0 else 0.0
-    else:
-        burstiness = 0.0
-
-    return pd.Series({
-        'first_step': first_step, 'last_step': last_step, 'time_span': time_span,
-        'time_std': time_std, 'time_skew': time_skew, 'burstiness': burstiness,
-    })
-
-
-def _calc_gap_agg(steps: pd.Series) -> pd.Series:
-    """
-    Calculate inter-transaction gap features for a group of transactions.
-
-    Returns Series with:
+    Gap features:
     - mean_gap: average time between consecutive transactions
     - median_gap: median time between consecutive transactions
     - std_gap: standard deviation of gaps
     - max_gap: longest gap between transactions
     - min_gap: shortest gap between transactions
     """
-    vals = steps.values
-    n = len(vals)
+    timestamps = steps.values
+    n = len(timestamps)
 
-    if n < 2:
+    # No transactions
+    if n == 0:
+        return pd.Series({feat: np.nan for feat in ALL_TIMING_FEATURES})
+
+    # Sort once, use for all calculations
+    sorted_timestamps = np.sort(timestamps)
+    first_step = sorted_timestamps[0]
+    last_step = sorted_timestamps[-1]
+    time_span = last_step - first_step
+
+    # Single transaction - no gaps possible
+    if n == 1:
         return pd.Series({
+            'first_step': first_step, 'last_step': last_step, 'time_span': 0.0,
+            'time_std': 0.0, 'time_skew': 0.0, 'burstiness': 1.0,
             'mean_gap': np.nan, 'median_gap': np.nan, 'std_gap': np.nan,
             'max_gap': np.nan, 'min_gap': np.nan,
         })
 
-    sorted_vals = np.sort(vals)
-    gaps = np.diff(sorted_vals)
+    # Calculate timing features
+    time_std = np.std(sorted_timestamps)
+    time_skew = stats.skew(sorted_timestamps) if time_std > 0 else 0.0
+
+    # Calculate gaps (already sorted)
+    gaps = np.diff(sorted_timestamps)
+
+    # Burstiness: B = (std - mean) / (std + mean), ranges from -1 to 1
+    gap_mean = gaps.mean()
+    gap_std = gaps.std() if len(gaps) > 1 else 0.0
+    denominator = gap_std + gap_mean
+    burstiness = (gap_std - gap_mean) / denominator if denominator > 0 else 0.0
+
+    # Gap features
+    mean_gap = gap_mean
+    median_gap = np.median(gaps)
+    std_gap = gap_std
+    max_gap = gaps.max()
+    min_gap = gaps.min()
 
     return pd.Series({
-        'mean_gap': gaps.mean(), 'median_gap': np.median(gaps),
-        'std_gap': gaps.std() if len(gaps) > 1 else 0.0,
-        'max_gap': gaps.max(), 'min_gap': gaps.min(),
+        'first_step': first_step, 'last_step': last_step, 'time_span': time_span,
+        'time_std': time_std, 'time_skew': time_skew, 'burstiness': burstiness,
+        'mean_gap': mean_gap, 'median_gap': median_gap, 'std_gap': std_gap,
+        'max_gap': max_gap, 'min_gap': min_gap,
     })
+
+
+def _add_timing_features(
+    df_window: pd.DataFrame,
+    groupby_obj,
+    direction: str,
+    window: tuple,
+    node_features: dict
+) -> None:
+    """
+    Add timing and gap features for a given direction (incoming/outgoing).
+
+    Args:
+        df_window: Filtered DataFrame for the current window
+        groupby_obj: GroupBy object grouped by account
+        direction: 'in' or 'out'
+        window: Tuple of (start_step, end_step)
+        node_features: Dict to add features to (modified in place)
+    """
+    if len(df_window) == 0:
+        return
+
+    timing_raw = groupby_obj['step'].apply(_calc_all_timing_features)
+
+    # apply() with Series return creates MultiIndex; unstack to DataFrame
+    if isinstance(timing_raw.index, pd.MultiIndex):
+        timing_df = timing_raw.unstack()
+        for feat in ALL_TIMING_FEATURES:
+            if feat in timing_df.columns:
+                node_features[f'{feat}_{direction}_{window[0]}_{window[1]}'] = timing_df[feat]
+
+
+def _calc_volume_trend(row: pd.Series, window_indices: np.ndarray) -> float:
+    """Calculate correlation between window index and transaction counts."""
+    if row.std() == 0 or len(row) <= 1:
+        return 0.0
+    return np.corrcoef(window_indices, row.values)[0, 1]
 
 
 class DataPreprocessor:
@@ -90,6 +126,11 @@ class DataPreprocessor:
         self.include_edge_features = config.get('include_edge_features', False)
         self.bank = None
         self.verbose = verbose
+
+        # Static account features (from spatial/accounts.csv)
+        # These are demographics that don't change over time: age, salary, city
+        # Path is derived automatically from experiment structure
+        self.static_accounts_path = None  # Set when processing, derived from tx_log path
 
         # Learning mode: transductive or inductive
         self.learning_mode = config['learning_mode']
@@ -135,13 +176,139 @@ class DataPreprocessor:
         # Drop columns not needed for feature engineering
         # Note: patternID is kept if split_by_pattern is enabled (for splitting, not as a feature)
         # modelType is always dropped to avoid direct pattern leakage
-        cols_to_drop = ['type', 'oldbalanceOrig', 'oldbalanceDest', 'newbalanceOrig', 'newbalanceDest', 'modelType']
+        # Balance columns are kept for computing balance at window start
+        cols_to_drop = ['type', 'modelType']
         if not self.split_by_pattern:
             cols_to_drop.append('patternID')
         df.drop(columns=cols_to_drop, inplace=True)
         return df
 
-    
+    def load_static_features(self) -> pd.DataFrame:
+        """
+        Load static account features from spatial/accounts.csv.
+
+        Returns DataFrame with columns: account, age, salary, city, init_balance
+        These are demographics/initial values that don't change over time.
+        init_balance is used as fallback for balance_at_start_* features.
+        """
+        if not self.static_accounts_path:
+            return None
+
+        from pathlib import Path
+        path = Path(self.static_accounts_path)
+        if not path.exists():
+            if self.verbose:
+                print(f"Warning: Static accounts file not found: {path}")
+            return None
+
+        df = pd.read_csv(path)
+
+        # Normalize column names (spatial output uses uppercase)
+        df.columns = df.columns.str.upper()
+
+        # Select and rename columns we need
+        static_cols = {
+            'ACCOUNT_ID': 'account',
+            'AGE': 'age',
+            'SALARY': 'salary',
+            'CITY': 'city',
+            'INIT_BALANCE': 'init_balance'
+        }
+
+        available_cols = {k: v for k, v in static_cols.items() if k in df.columns}
+        df_static = df[list(available_cols.keys())].rename(columns=available_cols)
+
+        if self.verbose:
+            print(f"Loaded static features for {len(df_static)} accounts: {list(df_static.columns)}")
+
+        return df_static
+
+    def merge_static_features(self, df_nodes: pd.DataFrame, df_static: pd.DataFrame) -> pd.DataFrame:
+        """
+        Merge static account features into node features DataFrame.
+
+        Args:
+            df_nodes: Node features with 'account' column
+            df_static: Static features with 'account', 'age', 'salary', 'city', 'init_balance' columns
+
+        Returns:
+            df_nodes with static features added (city one-hot encoded, init_balance used as fallback)
+        """
+        if df_static is None:
+            return df_nodes
+
+        # Merge on account
+        df_merged = df_nodes.merge(df_static, on='account', how='left')
+
+        # Log any missing accounts
+        missing = df_merged['age'].isna().sum() if 'age' in df_merged.columns else 0
+        if missing > 0 and self.verbose:
+            print(f"Warning: {missing} accounts missing static features")
+
+        # Use init_balance as fallback for balance_at_start_* columns
+        if 'init_balance' in df_merged.columns:
+            balance_cols = [col for col in df_merged.columns if col.startswith('balance_at_start_')]
+            for col in balance_cols:
+                # Handle both NaN and 'unknown' string values (can occur when no transactions before window start)
+                # First convert to numeric (coercing 'unknown' to NaN), then fill with init_balance
+                df_merged[col] = pd.to_numeric(df_merged[col], errors='coerce').fillna(df_merged['init_balance'])
+            # Drop init_balance after using it as fallback (it's not a feature itself)
+            df_merged = df_merged.drop(columns=['init_balance'])
+
+        # One-hot encode city column if present
+        if 'city' in df_merged.columns:
+            df_merged['city'] = df_merged['city'].fillna('unknown')
+            city_dummies = pd.get_dummies(df_merged['city'], prefix='city', dtype=float)
+            df_merged = pd.concat([df_merged.drop(columns=['city']), city_dummies], axis=1)
+
+        return df_merged
+
+    def compute_balance_at_step(self, df: pd.DataFrame, target_step: int, accounts: list) -> dict:
+        """
+        Compute balance for each account at a specific step.
+
+        Uses the most recent transaction before target_step to get the balance.
+        If no prior transactions, returns NaN (will use init_balance from static features).
+
+        Args:
+            df: Transaction DataFrame with balance columns
+            target_step: The step to compute balance at
+            accounts: List of account IDs to compute balances for
+
+        Returns:
+            Dict mapping account -> balance at target_step
+        """
+        # Filter transactions before target_step
+        df_prior = df[df['step'] < target_step]
+
+        balances = {}
+
+        # For outgoing transactions: use newbalanceOrig
+        if 'newbalanceOrig' in df_prior.columns:
+            df_out = df_prior[['nameOrig', 'step', 'newbalanceOrig']].copy()
+            df_out = df_out.sort_values('step').groupby('nameOrig').last()
+            for acc in df_out.index:
+                if acc in accounts:
+                    balances[acc] = df_out.loc[acc, 'newbalanceOrig']
+
+        # For incoming transactions: use newbalanceDest (override if more recent)
+        if 'newbalanceDest' in df_prior.columns:
+            df_in = df_prior[['nameDest', 'step', 'newbalanceDest']].copy()
+            df_in = df_in.sort_values('step').groupby('nameDest').last()
+            for acc in df_in.index:
+                if acc in accounts:
+                    # Check if incoming tx is more recent than outgoing
+                    if acc in balances:
+                        # Get the step of the last outgoing tx
+                        last_out_step = df_prior[df_prior['nameOrig'] == acc]['step'].max()
+                        last_in_step = df_prior[df_prior['nameDest'] == acc]['step'].max()
+                        if pd.notna(last_in_step) and (pd.isna(last_out_step) or last_in_step > last_out_step):
+                            balances[acc] = df_in.loc[acc, 'newbalanceDest']
+                    else:
+                        balances[acc] = df_in.loc[acc, 'newbalanceDest']
+
+        return balances
+
     def cal_node_features(self, df:pd.DataFrame, start_step, end_step) -> pd.DataFrame:
         # Validate window coverage
         total_span = end_step - start_step + 1
@@ -219,8 +386,15 @@ class DataPreprocessor:
         df_nodes = pd.concat([df_out[['account', 'bank']], df_in[['account', 'bank']]]).drop_duplicates().set_index('account')
         node_features = {}
         
+        # Get all accounts for balance calculation
+        all_accounts = set(df_nodes.index)
+
         # calculate spending features
         for window in windows:
+            # Balance at window start
+            balance_at_start = self.compute_balance_at_step(df, window[0], all_accounts)
+            node_features[f'balance_at_start_{window[0]}_{window[1]}'] = pd.Series(balance_at_start)
+
             gb_spending = df_spending[(df_spending['step']>=window[0])&(df_spending['step']<=window[1])].groupby(['account'])
             node_features[f'sums_spending_{window[0]}_{window[1]}'] = gb_spending['amount'].sum()
             node_features[f'means_spending_{window[0]}_{window[1]}'] = gb_spending['amount'].mean()
@@ -240,21 +414,8 @@ class DataPreprocessor:
             node_features[f'min_in_{window[0]}_{window[1]}'] = gb_in['amount'].min()
             node_features[f'count_in_{window[0]}_{window[1]}'] = gb_in['amount'].count()
             node_features[f'count_unique_in_{window[0]}_{window[1]}'] = gb_in['counterpart'].nunique()
-            # Timing features for incoming transactions
-            if len(df_in_window) > 0:
-                timing_in_raw = gb_in['step'].apply(_calc_timing_agg)
-                if isinstance(timing_in_raw.index, pd.MultiIndex):
-                    timing_in = timing_in_raw.unstack()
-                    for feat in ['first_step', 'last_step', 'time_span', 'time_std', 'time_skew', 'burstiness']:
-                        if feat in timing_in.columns:
-                            node_features[f'{feat}_in_{window[0]}_{window[1]}'] = timing_in[feat]
-                # Gap features for incoming transactions
-                gap_in_raw = gb_in['step'].apply(_calc_gap_agg)
-                if isinstance(gap_in_raw.index, pd.MultiIndex):
-                    gap_in = gap_in_raw.unstack()
-                    for feat in ['mean_gap', 'median_gap', 'std_gap', 'max_gap', 'min_gap']:
-                        if feat in gap_in.columns:
-                            node_features[f'{feat}_in_{window[0]}_{window[1]}'] = gap_in[feat]
+            # Timing and gap features for incoming transactions
+            _add_timing_features(df_in_window, gb_in, 'in', window, node_features)
 
             # Outgoing transaction features
             df_out_window = df_out[(df_out['step']>=window[0])&(df_out['step']<=window[1])]
@@ -267,23 +428,13 @@ class DataPreprocessor:
             node_features[f'min_out_{window[0]}_{window[1]}'] = gb_out['amount'].min()
             node_features[f'count_out_{window[0]}_{window[1]}'] = gb_out['amount'].count()
             node_features[f'count_unique_out_{window[0]}_{window[1]}'] = gb_out['counterpart'].nunique()
-            # Timing features for outgoing transactions
-            if len(df_out_window) > 0:
-                timing_out_raw = gb_out['step'].apply(_calc_timing_agg)
-                if isinstance(timing_out_raw.index, pd.MultiIndex):
-                    timing_out = timing_out_raw.unstack()
-                    for feat in ['first_step', 'last_step', 'time_span', 'time_std', 'time_skew', 'burstiness']:
-                        if feat in timing_out.columns:
-                            node_features[f'{feat}_out_{window[0]}_{window[1]}'] = timing_out[feat]
-                # Gap features for outgoing transactions
-                gap_out_raw = gb_out['step'].apply(_calc_gap_agg)
-                if isinstance(gap_out_raw.index, pd.MultiIndex):
-                    gap_out = gap_out_raw.unstack()
-                    for feat in ['mean_gap', 'median_gap', 'std_gap', 'max_gap', 'min_gap']:
-                        if feat in gap_out.columns:
-                            node_features[f'{feat}_out_{window[0]}_{window[1]}'] = gap_out[feat]
+            # Timing and gap features for outgoing transactions
+            _add_timing_features(df_out_window, gb_out, 'out', window, node_features)
         # Calculate inter-window timing features (patterns across windows)
         if len(windows) > 1:
+            # Prepare window indices for trend calculation (used for both directions)
+            window_indices = np.arange(len(windows))
+
             # Collect per-window counts for inter-window analysis
             in_counts_per_window = []
             out_counts_per_window = []
@@ -295,33 +446,35 @@ class DataPreprocessor:
                 if out_count_col in node_features:
                     out_counts_per_window.append(node_features[out_count_col])
 
-            # Number of active windows (windows with at least one transaction)
+            # Incoming inter-window features
             if in_counts_per_window:
                 in_counts_df = pd.concat(in_counts_per_window, axis=1).fillna(0)
                 node_features['n_active_windows_in'] = (in_counts_df > 0).sum(axis=1)
                 # Activity consistency: coefficient of variation across windows
-                in_means = in_counts_df.mean(axis=1)
-                in_stds = in_counts_df.std(axis=1)
-                node_features['window_activity_cv_in'] = (in_stds / in_means).replace([np.inf, -np.inf], 0).fillna(0)
+                in_means = in_counts_df.mean(axis=1).values
+                in_stds = in_counts_df.std(axis=1).values
+                node_features['window_activity_cv_in'] = pd.Series(
+                    np.divide(in_stds, in_means, out=np.zeros_like(in_stds), where=(in_means != 0)),
+                    index=in_counts_df.index
+                )
                 # Volume trend: correlation with window index (positive = increasing activity)
-                window_indices = np.arange(len(windows))
-                def calc_trend(row):
-                    if row.std() == 0:
-                        return 0.0
-                    return np.corrcoef(window_indices, row.values)[0, 1] if len(row) > 1 else 0.0
-                node_features['volume_trend_in'] = in_counts_df.apply(calc_trend, axis=1).fillna(0)
+                node_features['volume_trend_in'] = in_counts_df.apply(
+                    lambda row: _calc_volume_trend(row, window_indices), axis=1
+                ).fillna(0)
 
+            # Outgoing inter-window features
             if out_counts_per_window:
                 out_counts_df = pd.concat(out_counts_per_window, axis=1).fillna(0)
                 node_features['n_active_windows_out'] = (out_counts_df > 0).sum(axis=1)
-                out_means = out_counts_df.mean(axis=1)
-                out_stds = out_counts_df.std(axis=1)
-                node_features['window_activity_cv_out'] = (out_stds / out_means).replace([np.inf, -np.inf], 0).fillna(0)
-                def calc_trend(row):
-                    if row.std() == 0:
-                        return 0.0
-                    return np.corrcoef(window_indices, row.values)[0, 1] if len(row) > 1 else 0.0
-                node_features['volume_trend_out'] = out_counts_df.apply(calc_trend, axis=1).fillna(0)
+                out_means = out_counts_df.mean(axis=1).values
+                out_stds = out_counts_df.std(axis=1).values
+                node_features['window_activity_cv_out'] = pd.Series(
+                    np.divide(out_stds, out_means, out=np.zeros_like(out_stds), where=(out_means != 0)),
+                    index=out_counts_df.index
+                )
+                node_features['volume_trend_out'] = out_counts_df.apply(
+                    lambda row: _calc_volume_trend(row, window_indices), axis=1
+                ).fillna(0)
 
         # calculate non window related features
         combine_cols = ['account', 'days_in_bank', 'n_phone_changes', 'is_sar']
@@ -351,13 +504,18 @@ class DataPreprocessor:
             # (features are computed per-account, not per-account-bank pair)
             df_nodes = df_nodes.drop_duplicates(subset='account', keep='first')
         # if any value is nan, there was no transaction in the window for that account and hence the feature should be 0
-        df_nodes = df_nodes.fillna(0.0).infer_objects(copy=False)
+        # Fill numeric columns with 0.0 (for missing feature values)
+        numeric_cols = df_nodes.select_dtypes(include=[np.number]).columns
+        df_nodes[numeric_cols] = df_nodes[numeric_cols].fillna(0.0)
+        # Fill any remaining object columns (e.g., 'bank') with 'unknown' as safety
+        for col in df_nodes.select_dtypes(include=['object', 'category']).columns:
+            df_nodes[col] = df_nodes[col].fillna('unknown')
         # check if there is any missing values
         assert df_nodes.isnull().sum().sum() == 0, 'There are missing values in the node features'
         # Validate feature values
-        # 1. Amount-based features must be non-negative
-        amount_cols = [col for col in df_nodes.columns
-                      if col not in ['account', 'bank', 'pattern_id', 'is_sar']
+        # 1. Amount-based features must be non-negative (only check numeric columns)
+        amount_cols = [col for col in numeric_cols
+                      if col not in ['account', 'is_sar', 'pattern_id']
                       and not any(p in col for p in ['burstiness_', 'time_skew_', 'volume_trend_'])]
         assert (df_nodes[amount_cols] < 0).sum().sum() == 0, 'There are negative values in amount-based features'
 
@@ -458,13 +616,19 @@ class DataPreprocessor:
             if df_edges.empty:
                 df_edges = window_df
             else:
-                df_edges = pd.merge(df_edges, window_df, on=['src', 'dst'], how='outer').fillna(0.0)
+                df_edges = pd.merge(df_edges, window_df, on=['src', 'dst'], how='outer')
+                # Fill numeric columns with 0.0 for missing feature values
+                edge_numeric_cols = df_edges.select_dtypes(include=[np.number]).columns
+                df_edges[edge_numeric_cols] = df_edges[edge_numeric_cols].fillna(0.0)
 
         # Aggregate 'is_sar' for the entire dataset (use max to capture any SAR)
         sar_df = df.groupby(['src', 'dst'])['is_sar'].max().reset_index()
 
         # Merge SAR information into df_edges
-        df_edges = pd.merge(df_edges, sar_df, on=['src', 'dst'], how='outer').fillna(0.0)
+        df_edges = pd.merge(df_edges, sar_df, on=['src', 'dst'], how='outer')
+        # Fill numeric columns with 0.0 for missing feature values
+        sar_numeric_cols = df_edges.select_dtypes(include=[np.number]).columns
+        df_edges[sar_numeric_cols] = df_edges[sar_numeric_cols].fillna(0.0)
 
         # Ensure no missing values
         assert df_edges.isnull().sum().sum() == 0, 'There are missing values in the edge features'
@@ -528,9 +692,13 @@ class DataPreprocessor:
         test_mask[sar_test] = True
         test_mask[normal_test] = True
 
-        df_nodes['train_mask'] = train_mask
-        df_nodes['val_mask'] = val_mask
-        df_nodes['test_mask'] = test_mask
+        # Add masks using concat to avoid fragmentation warning
+        mask_df = pd.DataFrame({
+            'train_mask': train_mask,
+            'val_mask': val_mask,
+            'test_mask': test_mask
+        }, index=df_nodes.index)
+        df_nodes = pd.concat([df_nodes, mask_df], axis=1)
 
         if self.verbose:
             print(f"\nTransductive label splitting (random):")
@@ -596,9 +764,13 @@ class DataPreprocessor:
         val_mask[normal_val] = True
         test_mask[normal_test] = True
 
-        df_nodes['train_mask'] = train_mask
-        df_nodes['val_mask'] = val_mask
-        df_nodes['test_mask'] = test_mask
+        # Add masks using concat to avoid fragmentation warning
+        mask_df = pd.DataFrame({
+            'train_mask': train_mask,
+            'val_mask': val_mask,
+            'test_mask': test_mask
+        }, index=df_nodes.index)
+        df_nodes = pd.concat([df_nodes, mask_df], axis=1)
 
         # Remove pattern_id from output (it was only needed for splitting)
         df_nodes = df_nodes.drop(columns=['pattern_id'])
@@ -631,6 +803,10 @@ class DataPreprocessor:
         # Compute features once (same graph for all splits)
         df_nodes = self.cal_node_features(df_window, self.train_start_step, self.train_end_step)
         df_nodes = self.create_transductive_masks(df_nodes)
+
+        # Merge static features (age, salary, city) if configured
+        df_static = self.load_static_features()
+        df_nodes = self.merge_static_features(df_nodes, df_static)
 
         df_edges = self.extract_edge_list(df_window, self.train_start_step, self.train_end_step)
 
@@ -666,6 +842,12 @@ class DataPreprocessor:
         df_nodes_train = self.cal_node_features(df_train, self.train_start_step, self.train_end_step)
         df_nodes_val = self.cal_node_features(df_val, self.val_start_step, self.val_end_step)
         df_nodes_test = self.cal_node_features(df_test, self.test_start_step, self.test_end_step)
+
+        # Merge static features (age, salary, city) if configured
+        df_static = self.load_static_features()
+        df_nodes_train = self.merge_static_features(df_nodes_train, df_static)
+        df_nodes_val = self.merge_static_features(df_nodes_val, df_static)
+        df_nodes_test = self.merge_static_features(df_nodes_test, df_static)
 
         if self.verbose:
             print(f"\nInductive setting:")
@@ -716,13 +898,292 @@ class DataPreprocessor:
             return self.preprocess_transductive(df)
         else:
             return self.preprocess_inductive(df)
-    
-    
+
+    def plot_feature_analysis(self, df_nodes: pd.DataFrame, output_dir: str):
+        """
+        Generate plots comparing feature distributions between SAR and non-SAR accounts.
+
+        Creates a multi-panel figure showing how each feature separates the classes.
+
+        Args:
+            df_nodes: Node features DataFrame with 'is_sar' column
+            output_dir: Directory to save the plot
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            if self.verbose:
+                print("matplotlib not available, skipping feature analysis plots")
+            return
+
+        import os
+
+        if 'is_sar' not in df_nodes.columns:
+            if self.verbose:
+                print("No 'is_sar' column found, skipping feature analysis plots")
+            return
+
+        # Split into SAR and non-SAR
+        sar_df = df_nodes[df_nodes['is_sar'] == 1]
+        non_sar_df = df_nodes[df_nodes['is_sar'] == 0]
+
+        if len(sar_df) == 0 or len(non_sar_df) == 0:
+            if self.verbose:
+                print(f"Insufficient data for comparison (SAR: {len(sar_df)}, Non-SAR: {len(non_sar_df)})")
+            return
+
+        # Get numeric feature columns (exclude identifiers and labels)
+        # Note: city is now one-hot encoded (city_* columns) so it's included as numeric features
+        exclude_cols = ['account', 'bank', 'is_sar', 'train_mask', 'val_mask', 'test_mask']
+        numeric_cols = df_nodes.select_dtypes(include=[np.number]).columns
+        feature_cols = [c for c in numeric_cols if c not in exclude_cols]
+
+        if len(feature_cols) == 0:
+            if self.verbose:
+                print("No numeric features to plot")
+            return
+
+        # Group features by category for organized plotting
+        feature_groups = {
+            'Static': [c for c in feature_cols if c in ['age', 'salary']],
+            'Balance': [c for c in feature_cols if 'balance' in c],
+            'Incoming Amount': [c for c in feature_cols if any(p in c for p in ['sum_in', 'mean_in', 'median_in', 'std_in', 'max_in', 'min_in'])],
+            'Outgoing Amount': [c for c in feature_cols if any(p in c for p in ['sum_out', 'mean_out', 'median_out', 'std_out', 'max_out', 'min_out'])],
+            'Spending': [c for c in feature_cols if 'spending' in c],
+            'Counts': [c for c in feature_cols if 'count' in c],
+            'Timing': [c for c in feature_cols if any(p in c for p in ['first_step', 'last_step', 'time_span', 'time_std', 'gap'])],
+            'Burstiness': [c for c in feature_cols if any(p in c for p in ['burstiness', 'time_skew', 'volume_trend', 'activity_cv', 'n_active'])],
+            'Global': [c for c in feature_cols if c in ['counts_days_in_bank', 'counts_phone_changes']],
+        }
+
+        # Collect features that weren't categorized
+        categorized = set()
+        for cols in feature_groups.values():
+            categorized.update(cols)
+        uncategorized = [c for c in feature_cols if c not in categorized]
+        if uncategorized:
+            feature_groups['Other'] = uncategorized
+
+        # Remove empty groups
+        feature_groups = {k: v for k, v in feature_groups.items() if v}
+
+        if self.verbose:
+            print(f"\nGenerating feature analysis plots: {len(sar_df)} SAR, {len(non_sar_df)} non-SAR accounts")
+            print(f"Feature groups: {', '.join(f'{k}({len(v)})' for k, v in feature_groups.items())}")
+
+        # Create figure with subplots for each group
+        n_groups = len(feature_groups)
+        fig, axes = plt.subplots(n_groups, 1, figsize=(14, 3 * n_groups))
+        if n_groups == 1:
+            axes = [axes]
+
+        summary_stats = []
+
+        for idx, (group_name, cols) in enumerate(feature_groups.items()):
+            ax = axes[idx]
+
+            # Calculate median ratios for each feature
+            ratios = []
+            labels = []
+            for col in cols:
+                sar_vals = sar_df[col].dropna()
+                non_sar_vals = non_sar_df[col].dropna()
+
+                if len(sar_vals) > 0 and len(non_sar_vals) > 0:
+                    sar_median = np.median(sar_vals)
+                    non_sar_median = np.median(non_sar_vals)
+
+                    if non_sar_median != 0:
+                        ratio = sar_median / non_sar_median
+                    elif sar_median != 0:
+                        ratio = float('inf') if sar_median > 0 else float('-inf')
+                    else:
+                        ratio = 1.0
+
+                    ratios.append(ratio)
+                    # Shorten column name for display
+                    short_name = col.replace('_', ' ').replace('  ', ' ')
+                    if len(short_name) > 25:
+                        short_name = short_name[:22] + '...'
+                    labels.append(short_name)
+
+                    summary_stats.append({
+                        'group': group_name,
+                        'feature': col,
+                        'sar_median': sar_median,
+                        'non_sar_median': non_sar_median,
+                        'ratio': ratio
+                    })
+
+            if ratios:
+                # Color bars based on ratio (green = SAR higher, red = SAR lower)
+                colors = ['green' if r > 1.1 else 'red' if r < 0.9 else 'gray' for r in ratios]
+
+                # Use log scale for ratios
+                log_ratios = [np.log2(max(r, 0.01)) if r > 0 else -10 for r in ratios]
+
+                bars = ax.barh(range(len(ratios)), log_ratios, color=colors, alpha=0.7)
+                ax.set_yticks(range(len(ratios)))
+                ax.set_yticklabels(labels, fontsize=8)
+                ax.axvline(0, color='black', linestyle='-', linewidth=0.5)
+                ax.set_xlabel('Log2(SAR median / Non-SAR median)')
+                ax.set_title(f'{group_name} Features (n={len(cols)})')
+
+                # Add ratio values on bars
+                for i, (bar, ratio) in enumerate(zip(bars, ratios)):
+                    width = bar.get_width()
+                    x_pos = width + 0.1 if width >= 0 else width - 0.1
+                    ha = 'left' if width >= 0 else 'right'
+                    ax.text(x_pos, bar.get_y() + bar.get_height()/2,
+                           f'{ratio:.2f}x', va='center', ha=ha, fontsize=7)
+
+        plt.tight_layout()
+
+        # Save plot
+        os.makedirs(output_dir, exist_ok=True)
+        plot_path = os.path.join(output_dir, 'feature_analysis.png')
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+
+        if self.verbose:
+            print(f"Saved feature analysis plot to {plot_path}")
+
+            # Print top discriminative features
+            summary_stats.sort(key=lambda x: abs(np.log2(max(x['ratio'], 0.01)) if x['ratio'] > 0 else 10), reverse=True)
+            print("\nTop 10 most discriminative features (by median ratio):")
+            for stat in summary_stats[:10]:
+                direction = "SAR higher" if stat['ratio'] > 1 else "SAR lower"
+                print(f"  {stat['feature']}: {stat['ratio']:.2f}x ({direction})")
+
+        # Plot city distribution if available (check for one-hot encoded city columns)
+        city_cols = [col for col in df_nodes.columns if col.startswith('city_')]
+        if city_cols:
+            self._plot_city_analysis(df_nodes, sar_df, non_sar_df, output_dir, city_cols)
+
+    def _plot_city_analysis(self, df_nodes: pd.DataFrame, sar_df: pd.DataFrame,
+                            non_sar_df: pd.DataFrame, output_dir: str, city_cols: list):
+        """
+        Plot city distribution analysis comparing SAR rates across cities.
+
+        Args:
+            df_nodes: Full node DataFrame
+            sar_df: SAR accounts subset
+            non_sar_df: Non-SAR accounts subset
+            output_dir: Directory to save the plot
+            city_cols: List of one-hot encoded city column names
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            return
+
+        import os
+
+        # Reconstruct city from one-hot encoded columns
+        # Each row has exactly one city column = 1.0
+        city_data = df_nodes[city_cols]
+        cities = city_data.idxmax(axis=1).str.replace('city_', '', n=1)
+        sar_city_data = sar_df[city_cols]
+        sar_cities = sar_city_data.idxmax(axis=1).str.replace('city_', '', n=1)
+
+        # Count accounts per city
+        city_counts = cities.value_counts()
+        sar_city_counts = sar_cities.value_counts()
+
+        # Calculate SAR rate per city
+        city_stats = []
+        for city in city_counts.index:
+            total = city_counts.get(city, 0)
+            sar_count = sar_city_counts.get(city, 0)
+            if total > 0:
+                sar_rate = sar_count / total
+                city_stats.append({
+                    'city': city,
+                    'total': total,
+                    'sar_count': sar_count,
+                    'sar_rate': sar_rate
+                })
+
+        if not city_stats:
+            return
+
+        # Sort by SAR rate
+        city_stats.sort(key=lambda x: x['sar_rate'], reverse=True)
+
+        # Create figure with two subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, max(5, len(city_stats) * 0.3)))
+
+        # Plot 1: SAR rate by city
+        cities_sorted = [s['city'] for s in city_stats]
+        sar_rates = [s['sar_rate'] for s in city_stats]
+        totals = [s['total'] for s in city_stats]
+
+        # Color by SAR rate (higher = more red)
+        overall_sar_rate = len(sar_df) / len(df_nodes)
+        colors = ['red' if r > overall_sar_rate * 1.5 else 'orange' if r > overall_sar_rate else 'green' for r in sar_rates]
+
+        bars = ax1.barh(range(len(cities_sorted)), sar_rates, color=colors, alpha=0.7)
+        ax1.axvline(overall_sar_rate, color='black', linestyle='--', linewidth=1, label=f'Overall SAR rate: {overall_sar_rate:.1%}')
+        ax1.set_yticks(range(len(cities_sorted)))
+        ax1.set_yticklabels([f"{c} (n={totals[i]})" for i, c in enumerate(cities_sorted)], fontsize=8)
+        ax1.set_xlabel('SAR Rate')
+        ax1.set_title('SAR Rate by City')
+        ax1.legend(loc='lower right')
+
+        # Add percentage labels
+        for i, (bar, rate) in enumerate(zip(bars, sar_rates)):
+            ax1.text(bar.get_width() + 0.005, bar.get_y() + bar.get_height()/2,
+                    f'{rate:.1%}', va='center', fontsize=7)
+
+        # Plot 2: City distribution comparison (SAR vs Non-SAR)
+        # Normalize to show proportion
+        sar_proportions = [sar_city_counts.get(c, 0) / len(sar_df) if len(sar_df) > 0 else 0 for c in cities_sorted]
+        non_sar_proportions = [(city_counts.get(c, 0) - sar_city_counts.get(c, 0)) / len(non_sar_df) if len(non_sar_df) > 0 else 0 for c in cities_sorted]
+
+        y_pos = np.arange(len(cities_sorted))
+        width = 0.35
+
+        ax2.barh(y_pos - width/2, non_sar_proportions, width, label='Non-SAR', alpha=0.7, color='C0')
+        ax2.barh(y_pos + width/2, sar_proportions, width, label='SAR', alpha=0.7, color='C1')
+        ax2.set_yticks(y_pos)
+        ax2.set_yticklabels(cities_sorted, fontsize=8)
+        ax2.set_xlabel('Proportion of Accounts')
+        ax2.set_title('City Distribution: SAR vs Non-SAR')
+        ax2.legend()
+
+        plt.tight_layout()
+
+        # Save plot
+        city_plot_path = os.path.join(output_dir, 'city_analysis.png')
+        plt.savefig(city_plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+
+        if self.verbose:
+            print(f"Saved city analysis plot to {city_plot_path}")
+
+            # Print city summary
+            print(f"\nCity Analysis (overall SAR rate: {overall_sar_rate:.1%}):")
+            print("  Cities with elevated SAR rates:")
+            for stat in city_stats[:5]:
+                if stat['sar_rate'] > overall_sar_rate:
+                    print(f"    {stat['city']}: {stat['sar_rate']:.1%} SAR rate ({stat['sar_count']}/{stat['total']} accounts)")
+
     def __call__(self, raw_data_file):
         if self.verbose:
             print('\nPreprocessing data...', end='')
+
+        # Derive static accounts path from tx_log path
+        # tx_log: experiments/<exp>/temporal/tx_log.parquet
+        # accounts: experiments/<exp>/spatial/accounts.csv
+        from pathlib import Path
+        tx_path = Path(raw_data_file)
+        experiment_dir = tx_path.parent.parent  # Go up from temporal/ to experiment root
+        self.static_accounts_path = experiment_dir / 'spatial' / 'accounts.csv'
+
         raw_df = self.load_data(raw_data_file)
         preprocessed_df = self.preprocess(raw_df)
+
         if self.verbose:
             print(' done\n')
+
         return preprocessed_df
