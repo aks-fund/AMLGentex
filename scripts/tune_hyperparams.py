@@ -5,6 +5,7 @@ import time
 import yaml
 from src.ml import servers, clients, models
 from src.ml.training import centralized, federated, HyperparamTuner
+from src.utils.logging import configure_logging
 
 def main():
     
@@ -22,10 +23,15 @@ def main():
     parser.add_argument('--settings', nargs='+', help='Types of settings to use. Can be "isolated", "centralized" or "federated".', default=['centralized']) # 'centralized', 'federated', 'isolated'
     args = parser.parse_args()
     
+    # Configure logging with log file in results directory
+    os.makedirs(args.results_dir, exist_ok=True)
+    log_file = os.path.join(args.results_dir, 'tune_hyperparams.log')
+    configure_logging(verbose=True, log_file=log_file)
+
     print('\nParsed arguments:')
     for arg, val in vars(args).items():
         print(f'{arg}: {val}')
-    
+
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
     

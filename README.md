@@ -189,9 +189,107 @@ AMLGentex generates scale-free networks where node degree follows a power-law di
   <em>Figure 5: From degree distribution blueprint to final spatial graph with injected patterns</em>
 </p>
 
-#### 4. ML Account Selection
+#### 4. KYC Demographics Assignment
+
+Before alert pattern injection, AMLGentex assigns realistic demographic attributes (KYC - Know Your Customer) to all accounts based on population statistics:
+
+**Assigned Attributes:**
+- **Age** (years): Population-sampled from demographics CSV (16-100 years)
+- **Salary** (monthly SEK): Log-normal distribution per age group
+- **Balance** (SEK): Derived from salary + structural position + noise
+  - Formula: `log(balance) = α_salary·log(salary) + α_struct·z(struct) + noise`
+  - Calibrated to median: `balance_months × population_median_salary`
+- **City** (categorical): BFS propagation from high-degree hub seeds
+
+**KYC Data Flow:**
+
+```
+┌─────────────────┐     ┌─────────────────────┐     ┌─────────────────┐
+│ demographics.csv│     │ DemographicsAssigner│     │  accounts.csv   │
+│                 │────▶│                     │────▶│                 │
+│ age, salary     │     │ • Sample age        │     │ AGE, SALARY,    │
+│ statistics      │     │ • Derive salary     │     │ INIT_BALANCE,   │
+└─────────────────┘     │ • Compute balance   │     │ CITY            │
+                        │ • Assign city (BFS) │     └────────┬────────┘
+                        └─────────────────────┘              │
+                                                             ▼
+┌─────────────────┐     ┌─────────────────────┐     ┌─────────────────┐
+│   ML Features   │     │    Preprocessor     │     │ Temporal Sim    │
+│                 │◀────│                     │◀────│                 │
+│ age, salary,    │     │ • Load static attrs │     │ • Salary →      │
+│ city_0, city_1, │     │ • One-hot city      │     │   income/spend  │
+│ ...             │     │ • Balance fallback  │     │ • Balance →     │
+└─────────────────┘     └─────────────────────┘     │   starting bal  │
+                                                    └─────────────────┘
+```
+
+**Configuration** in `data.yaml`:
+
+```yaml
+demographics:
+  csv_path: demographics.csv  # Population statistics
+  balance_params:
+    balance_months: 2.5      # Target median (months of salary)
+    alpha_salary: 0.6        # Salary elasticity
+    alpha_struct: 0.4        # Structural position effect
+    sigma: 0.5               # Noise std dev
+```
+
+**Demographics CSV Format:**
+```csv
+age, average year income (tkr), median year income (tkr), population size
+16, 5.7, 0.0, 118238.0
+17, 11.5, 5.3, 117938.0
+...
+```
+
+**Key Insight:** Balance correlates meaningfully with both salary (via `alpha_salary`) and graph structure (via `alpha_struct`), creating realistic wealth distribution for ML detection.
+
+#### 5. ML Account Selection
 
 When injecting alert patterns, AMLGentex uses a weighted selection system to choose which accounts participate in money laundering. This creates realistic patterns where structurally important accounts (hubs, bridges) are more likely to be involved.
+
+**Weight Computation Flow:**
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           ML ACCOUNT SELECTOR                                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐            │
+│  │ STRUCTURAL      │   │ KYC ATTRIBUTES  │   │ LOCALITY (PPR)  │            │
+│  │                 │   │                 │   │                 │            │
+│  │ • degree        │   │ • init_balance  │   │ • city_global   │            │
+│  │ • betweenness   │   │ • salary        │   │   (Personalized │            │
+│  │ • pagerank      │   │ • age           │   │    PageRank)    │            │
+│  └────────┬────────┘   └────────┬────────┘   └────────┬────────┘            │
+│           │                     │                     │                      │
+│           ▼                     ▼                     ▼                      │
+│  ┌─────────────────────────────────────────────────────────────┐            │
+│  │                    NORMALIZE (z-score)                       │            │
+│  │     log transform for skewed metrics (degree, balance)       │            │
+│  └─────────────────────────────────────────────────────────────┘            │
+│                                 │                                            │
+│                                 ▼                                            │
+│  ┌─────────────────────────────────────────────────────────────┐            │
+│  │              WEIGHTED COMBINATION                            │            │
+│  │   score = β·z_structural + γ·z_kyc + δ·z_propagation        │            │
+│  └─────────────────────────────────────────────────────────────┘            │
+│                                 │                                            │
+│                                 ▼                                            │
+│  ┌─────────────────────────────────────────────────────────────┐            │
+│  │                    SOFTMAX                                   │            │
+│  │           ml_weight = exp(score - max_score)                 │            │
+│  └─────────────────────────────────────────────────────────────┘            │
+│                                 │                                            │
+│                                 ▼                                            │
+│  ┌─────────────────────────────────────────────────────────────┐            │
+│  │              WEIGHTED RANDOM SELECTION                       │            │
+│  │     Select account → Apply participation_decay → Repeat      │            │
+│  └─────────────────────────────────────────────────────────────┘            │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
 **Selection Weights** combine three components:
 
@@ -242,7 +340,17 @@ ml_selector:
 - If you want geographic clusters: increase `propagation_weights.city`
 - Betweenness is highly skewed (few nodes dominate) - keep weight low (0.1-0.2)
 
+**KYC in Features:** Demographics flow through the pipeline:
+1. **Spatial output:** Saved to `accounts.csv` (ACCOUNT_ID, AGE, SALARY, CITY, INIT_BALANCE)
+2. **Temporal simulation:** Salary drives income/outcome behavior
+3. **Preprocessing:**
+   - Age and salary stored as-is in features
+   - City one-hot encoded (`city_0`, `city_1`, ...)
+   - init_balance used as fallback for `balance_at_start_*` when no prior transactions, then dropped
+4. **ML Training:** Age, salary, and city_* used as input features
+
 **Configuration:** Spatial graph generation is controlled by `experiments/<name>/config/data.yaml` and CSV files defining:
+- `demographics.csv` - Population statistics (age, salary distribution)
 - `accounts.csv` - Account properties (balance, bank, country)
 - `degree.csv` - Degree distribution blueprint (auto-generated from `scale-free` parameters if not present)
 - `normalModels.csv` - Normal transaction patterns
@@ -329,18 +437,68 @@ AMLGentex uses **two-level Bayesian optimization** to find optimal data generati
 
 #### How It Works
 
+**Two-Level Optimization Flow:**
+
 ```
-For num_trials_data iterations:
-    1. Sample new alert data parameters (mean_amount_sar, prob_spend_cash, etc.)
-    2. Generate synthetic data with those parameters
-    3. Preprocess data
-    4. For num_trials_model iterations:
-        a. Sample model hyperparameters
-        b. Train model
-        c. Evaluate on validation set
-    5. Record best model performance for this data configuration
-    6. Use operational objective to compute data quality score
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         BAYESIAN OPTIMIZATION                                    │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌───────────────────────────────────────────────────────────────────────────┐ │
+│  │ PHASE 1: BASELINE GENERATION (once)                                       │ │
+│  │                                                                           │ │
+│  │   • Normal accounts + Graph structure + Demographics                      │ │
+│  │   • Compute structural metrics (degree, betweenness, pagerank)            │ │
+│  │   • Compute locality fields (city PPR propagation)                        │ │
+│  │                           ↓                                               │ │
+│  │                  Save baseline checkpoint                                 │ │
+│  └───────────────────────────────────────────────────────────────────────────┘ │
+│                              │                                                  │
+│                              ▼                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐ │
+│  │ PHASE 2: DATA TRIALS (num_trials_data iterations)                         │ │
+│  │ ┌─────────────────────────────────────────────────────────────────────┐   │ │
+│  │ │                                                                     │   │ │
+│  │ │  ① Sample data parameters (ml_selector weights, temporal params)   │   │ │
+│  │ │                           ↓                                         │   │ │
+│  │ │  ② Load baseline → Recompute ML weights with trial's config        │   │ │
+│  │ │                           ↓                                         │   │ │
+│  │ │  ③ Inject alerts using weighted account selection                  │   │ │
+│  │ │                           ↓                                         │   │ │
+│  │ │  ④ Run temporal simulation                                         │   │ │
+│  │ │                           ↓                                         │   │ │
+│  │ │  ⑤ Preprocess into features                                        │   │ │
+│  │ │                           ↓                                         │   │ │
+│  │ │  ┌─────────────────────────────────────────────────────────────┐   │   │ │
+│  │ │  │ MODEL TRIALS (num_trials_model iterations)                  │   │   │ │
+│  │ │  │                                                             │   │   │ │
+│  │ │  │   ⓐ Sample model hyperparameters                           │   │   │ │
+│  │ │  │   ⓑ Train model                                            │   │   │ │
+│  │ │  │   ⓒ Evaluate on validation set                             │   │   │ │
+│  │ │  │   ⓓ Record performance                                     │   │   │ │
+│  │ │  │                                                             │   │   │ │
+│  │ │  └─────────────────────────────────────────────────────────────┘   │   │ │
+│  │ │                           ↓                                         │   │ │
+│  │ │  ⑥ Compute objectives: utility_loss + feature_importance_loss      │   │ │
+│  │ │                           ↓                                         │   │ │
+│  │ │  ⑦ Update Pareto front                                             │   │ │
+│  │ │                                                                     │   │ │
+│  │ └─────────────────────────────────────────────────────────────────────┘   │ │
+│  └───────────────────────────────────────────────────────────────────────────┘ │
+│                              │                                                  │
+│                              ▼                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐ │
+│  │ OUTPUT                                                                    │ │
+│  │                                                                           │ │
+│  │   • Pareto-optimal data configurations                                    │ │
+│  │   • Best model hyperparameters per configuration                          │ │
+│  │   • pareto_front.png visualization                                        │ │
+│  └───────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Key Insight:** The baseline checkpoint stores structural metrics (degree, betweenness, pagerank) and locality fields, allowing efficient exploration of ML selector weights without recomputing expensive graph metrics for each trial.
 
 #### Three Operational Objectives
 

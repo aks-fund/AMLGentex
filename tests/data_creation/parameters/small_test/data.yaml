@@ -13,7 +13,7 @@ input:
   transaction_type: transactionType.csv
   is_aggregated_accounts: true
 
-temporal:
+spatial:
   transactions: transactions.csv
   accounts: accounts.csv
   alert_members: alert_models.csv

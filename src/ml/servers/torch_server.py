@@ -4,9 +4,12 @@ import numpy as np
 import torch
 from src.ml.metrics import average_precision_score
 from src.utils import decrease_lr, filter_args, set_random_seed
+from src.utils.logging import get_logger
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, precision_recall_curve, precision_score, recall_score, roc_curve
 from tqdm import tqdm
 from typing import Any, Dict, List, Tuple
+
+logger = get_logger(__name__)
 
 
 class TorchServer():
@@ -32,7 +35,7 @@ class TorchServer():
             # Handle both torch.nn.Linear (in_features) and torch_geometric.nn.Linear (in_channels)
             actual_input_dim = getattr(input_layer, 'in_features', None) or getattr(input_layer, 'in_channels', None)
             if actual_input_dim and 'input_dim' in kwargs and kwargs['input_dim'] != actual_input_dim:
-                print(f"Server: Using input_dim={actual_input_dim} from client (config had {kwargs['input_dim']})")
+                logger.info(f"Server: Using input_dim={actual_input_dim} from client (config had {kwargs['input_dim']})")
             if actual_input_dim:
                 kwargs['input_dim'] = actual_input_dim
 

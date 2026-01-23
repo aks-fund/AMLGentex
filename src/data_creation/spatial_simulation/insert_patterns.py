@@ -12,7 +12,7 @@ def insert_alert_patterns(conf_file:str):
     with open(conf_file, 'r') as rf:
         conf = yaml.safe_load(rf)
         directory = conf["input"]["directory"]
-        output_dir = conf["temporal"]["directory"]
+        output_dir = conf["spatial"]["directory"]
         patterns_to_insert = conf["input"]["insert_patterns"]
 
     src_path = os.path.join(directory, patterns_to_insert)
@@ -32,7 +32,7 @@ def modify_accounts_file(conf_file:str, accounts:list):
 
     with open(conf_file, 'r') as rf:
         conf = yaml.safe_load(rf)
-        output_dir = conf["temporal"]["directory"]
+        output_dir = conf["spatial"]["directory"]
 
     accounts_file = os.path.join(output_dir, 'accounts.csv')
     accounts = sorted(accounts)

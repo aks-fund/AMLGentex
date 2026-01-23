@@ -26,8 +26,8 @@ def minimal_config(tmp_path):
     output_dir = tmp_path / "output"
     output_dir.mkdir()
 
-    # Create minimal degree.csv
-    degree_file = input_dir / "degree.csv"
+    # Create minimal degree.csv (goes in spatial output directory, not input)
+    degree_file = output_dir / "degree.csv"
     degree_file.write_text("count,in_degree,out_degree\n10,1,1\n")
 
     # Create minimal accounts.csv (aggregated format)
@@ -78,7 +78,7 @@ def minimal_config(tmp_path):
             'transaction_type': 'transaction_type.csv',
             'is_aggregated_accounts': True,
         },
-        'temporal': {
+        'spatial': {
             'directory': str(output_dir),
             'transactions': 'transactions.csv',
             'accounts': 'accounts.csv',
@@ -121,7 +121,7 @@ class TestBaselineCheckpoint:
 
         saved_path = txg.save_baseline_checkpoint()
 
-        expected_path = os.path.join(minimal_config['input']['directory'], 'baseline_checkpoint.pkl')
+        expected_path = os.path.join(minimal_config['spatial']['directory'], 'baseline_checkpoint.pkl')
         assert saved_path == expected_path
         assert os.path.exists(saved_path)
 

@@ -3,11 +3,16 @@ import os
 import yaml
 from src.feature_engineering import DataPreprocessor, summarize_dataset
 from src.utils.config import load_preprocessing_config
+from src.utils.logging import configure_logging
 from typing import Dict
 
 def main(config: Dict, verbose: bool = False):
+    # Configure logging with log file in preprocessed data directory
+    log_file = os.path.join(config['preprocessed_data_dir'], 'preprocess.log')
+    os.makedirs(config['preprocessed_data_dir'], exist_ok=True)
+    configure_logging(verbose=verbose, log_file=log_file)
 
-    preprocessor = DataPreprocessor(config, verbose=verbose)
+    preprocessor = DataPreprocessor(config)
     datasets = preprocessor(config['raw_data_file'])
 
     os.makedirs(config['preprocessed_data_dir'], exist_ok=True)

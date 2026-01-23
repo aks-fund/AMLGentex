@@ -2,6 +2,10 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 # Feature names for timing calculations
 TIMING_FEATURES = ['first_step', 'last_step', 'time_span', 'time_std', 'time_skew', 'burstiness']
@@ -120,12 +124,11 @@ def _calc_volume_trend(row: pd.Series, window_indices: np.ndarray) -> float:
 
 
 class DataPreprocessor:
-    def __init__(self, config, verbose: bool = True):
+    def __init__(self, config):
         self.num_windows = config['num_windows']
         self.window_len = config['window_len']
         self.include_edge_features = config.get('include_edge_features', False)
         self.bank = None
-        self.verbose = verbose
 
         # Static account features (from spatial/accounts.csv)
         # These are demographics that don't change over time: age, salary, city
@@ -174,12 +177,11 @@ class DataPreprocessor:
         df = pd.read_parquet(path)
         df = df[df['bankOrig'] != 'source'] # TODO: create features based on source transactions
         # Drop columns not needed for feature engineering
-        # Note: patternID is kept if split_by_pattern is enabled (for splitting, not as a feature)
-        # modelType is always dropped to avoid direct pattern leakage
+        # patternID and modelType are dropped to avoid direct pattern leakage
+        # (split_by_pattern uses alert_models.csv instead)
         # Balance columns are kept for computing balance at window start
-        cols_to_drop = ['type', 'modelType']
-        if not self.split_by_pattern:
-            cols_to_drop.append('patternID')
+        cols_to_drop = ['type', 'modelType', 'patternID']
+        cols_to_drop = [c for c in cols_to_drop if c in df.columns]
         df.drop(columns=cols_to_drop, inplace=True)
         return df
 
@@ -197,8 +199,7 @@ class DataPreprocessor:
         from pathlib import Path
         path = Path(self.static_accounts_path)
         if not path.exists():
-            if self.verbose:
-                print(f"Warning: Static accounts file not found: {path}")
+            logger.info(f"Warning: Static accounts file not found: {path}")
             return None
 
         df = pd.read_csv(path)
@@ -218,10 +219,83 @@ class DataPreprocessor:
         available_cols = {k: v for k, v in static_cols.items() if k in df.columns}
         df_static = df[list(available_cols.keys())].rename(columns=available_cols)
 
-        if self.verbose:
-            print(f"Loaded static features for {len(df_static)} accounts: {list(df_static.columns)}")
+        logger.info(f"Loaded static features for {len(df_static)} accounts: {list(df_static.columns)}")
 
         return df_static
+
+    def load_alert_models(self) -> dict:
+        """
+        Load alert_models.csv to get account-to-patterns mapping.
+
+        Returns dict mapping account_id -> set of pattern IDs.
+        Used for split_by_pattern to properly handle accounts in multiple patterns.
+        """
+        if not hasattr(self, 'alert_models_path') or not self.alert_models_path:
+            return {}
+
+        from pathlib import Path
+        path = Path(self.alert_models_path)
+        if not path.exists():
+            logger.warning(f"alert_models.csv not found: {path}. Pattern-based splitting may be incomplete.")
+            return {}
+
+        df = pd.read_csv(path)
+
+        # Build account -> set of patterns mapping
+        # alert_models.csv has columns: modelID, type, accountID, isMain, sourceType, phase
+        account_to_patterns = {}
+        for _, row in df.iterrows():
+            account_id = row['accountID']
+            pattern_id = row['modelID']
+            if account_id not in account_to_patterns:
+                account_to_patterns[account_id] = set()
+            account_to_patterns[account_id].add(pattern_id)
+
+        n_multi_pattern = sum(1 for patterns in account_to_patterns.values() if len(patterns) > 1)
+        if n_multi_pattern > 0:
+            logger.info(f"Loaded alert_models: {len(account_to_patterns)} SAR accounts, "
+                       f"{n_multi_pattern} in multiple patterns")
+        else:
+            logger.info(f"Loaded alert_models: {len(account_to_patterns)} SAR accounts")
+
+        return account_to_patterns
+
+    def load_normal_models(self) -> dict:
+        """
+        Load normal_models.csv to get normal account-to-patterns mapping.
+
+        Returns dict mapping account_id -> set of pattern IDs.
+        Used for split_by_pattern to split normal accounts by pattern (not randomly).
+        """
+        if not hasattr(self, 'normal_models_path') or not self.normal_models_path:
+            return {}
+
+        from pathlib import Path
+        path = Path(self.normal_models_path)
+        if not path.exists():
+            logger.info(f"normal_models.csv not found: {path}. Normal accounts will be split randomly.")
+            return {}
+
+        df = pd.read_csv(path)
+
+        # Build account -> set of patterns mapping
+        # normal_models.csv has columns: modelID, type, accountID, isMain
+        account_to_patterns = {}
+        for _, row in df.iterrows():
+            account_id = row['accountID']
+            pattern_id = row['modelID']
+            if account_id not in account_to_patterns:
+                account_to_patterns[account_id] = set()
+            account_to_patterns[account_id].add(pattern_id)
+
+        n_multi_pattern = sum(1 for patterns in account_to_patterns.values() if len(patterns) > 1)
+        if n_multi_pattern > 0:
+            logger.info(f"Loaded normal_models: {len(account_to_patterns)} normal accounts, "
+                       f"{n_multi_pattern} in multiple patterns")
+        else:
+            logger.info(f"Loaded normal_models: {len(account_to_patterns)} normal accounts")
+
+        return account_to_patterns
 
     def merge_static_features(self, df_nodes: pd.DataFrame, df_static: pd.DataFrame) -> pd.DataFrame:
         """
@@ -242,8 +316,8 @@ class DataPreprocessor:
 
         # Log any missing accounts
         missing = df_merged['age'].isna().sum() if 'age' in df_merged.columns else 0
-        if missing > 0 and self.verbose:
-            print(f"Warning: {missing} accounts missing static features")
+        if missing > 0:
+            logger.info(f"Warning: {missing} accounts missing static features")
 
         # Use init_balance as fallback for balance_at_start_* columns
         if 'init_balance' in df_merged.columns:
@@ -310,15 +384,9 @@ class DataPreprocessor:
         return balances
 
     def cal_node_features(self, df:pd.DataFrame, start_step, end_step) -> pd.DataFrame:
-        # Validate window coverage
-        total_span = end_step - start_step + 1
-        if self.num_windows == 1 and self.window_len < total_span:
-            raise ValueError(f"Window configuration (num_windows={self.num_windows}, window_len={self.window_len}) "
-                           f"do not allow coverage of the full range [{start_step}, {end_step}] ({total_span} steps)")
-
         # Calculate windows - allow both overlapping and non-overlapping strategies
+        total_span = end_step - start_step + 1
         if self.num_windows > 1:
-            total_span = end_step - start_step + 1
             total_coverage = self.num_windows * self.window_len
 
             if total_coverage >= total_span:
@@ -330,8 +398,7 @@ class DataPreprocessor:
                 windows[-1] = (end_step - self.window_len + 1, end_step)
             else:
                 # Partial coverage with non-overlapping windows (evenly spaced)
-                if self.verbose:
-                    print(f"Warning: Windows cover {total_coverage}/{total_span} steps. Using non-overlapping windows.")
+                logger.info(f"Warning: Windows cover {total_coverage}/{total_span} steps. Using non-overlapping windows.")
                 step_size = total_span // self.num_windows
                 windows = [(start_step + i*step_size,
                            min(start_step + i*step_size + self.window_len - 1, end_step))
@@ -349,13 +416,6 @@ class DataPreprocessor:
         out_cols = ['step', 'nameOrig', 'bankOrig', 'amount', 'nameDest', 'daysInBankOrig', 'phoneChangesOrig', 'isSAR']
         out_rename = {'nameOrig': 'account', 'bankOrig': 'bank', 'nameDest': 'counterpart',
                       'daysInBankOrig': 'days_in_bank', 'phoneChangesOrig': 'n_phone_changes', 'isSAR': 'is_sar'}
-
-        # Include patternID if split_by_pattern is enabled
-        if self.split_by_pattern and 'patternID' in df.columns:
-            in_cols.append('patternID')
-            in_rename['patternID'] = 'pattern_id'
-            out_cols.append('patternID')
-            out_rename['patternID'] = 'pattern_id'
 
         if self.bank is not None:
             # Accounts belonging to this bank
@@ -430,6 +490,13 @@ class DataPreprocessor:
             node_features[f'count_unique_out_{window[0]}_{window[1]}'] = gb_out['counterpart'].nunique()
             # Timing and gap features for outgoing transactions
             _add_timing_features(df_out_window, gb_out, 'out', window, node_features)
+
+            # Combined (in+out) timing features - captures cross-direction temporal patterns
+            df_combined_window = pd.concat([df_in_window, df_out_window])
+            if len(df_combined_window) > 0:
+                gb_combined = df_combined_window.groupby(['account'])
+                _add_timing_features(df_combined_window, gb_combined, 'combined', window, node_features)
+
         # Calculate inter-window timing features (patterns across windows)
         if len(windows) > 1:
             # Prepare window indices for trend calculation (used for both directions)
@@ -476,19 +543,28 @@ class DataPreprocessor:
                     lambda row: _calc_volume_trend(row, window_indices), axis=1
                 ).fillna(0)
 
+            # Combined (in+out) inter-window features
+            if in_counts_per_window and out_counts_per_window:
+                combined_counts_df = in_counts_df.add(out_counts_df, fill_value=0)
+                node_features['n_active_windows_combined'] = (combined_counts_df > 0).sum(axis=1)
+                combined_means = combined_counts_df.mean(axis=1).values
+                combined_stds = combined_counts_df.std(axis=1).values
+                node_features['window_activity_cv_combined'] = pd.Series(
+                    np.divide(combined_stds, combined_means, out=np.zeros_like(combined_stds), where=(combined_means != 0)),
+                    index=combined_counts_df.index
+                )
+                node_features['volume_trend_combined'] = combined_counts_df.apply(
+                    lambda row: _calc_volume_trend(row, window_indices), axis=1
+                ).fillna(0)
+
         # calculate non window related features
         combine_cols = ['account', 'days_in_bank', 'n_phone_changes', 'is_sar']
-        if self.split_by_pattern and 'pattern_id' in df_in.columns:
-            combine_cols.append('pattern_id')
         df_combined = pd.concat([df_in[combine_cols], df_out[combine_cols]])
         gb = df_combined.groupby('account')
         node_features['counts_days_in_bank'] = gb['days_in_bank'].max()
         node_features['counts_phone_changes'] = gb['n_phone_changes'].max()
         # find label
         node_features['is_sar'] = gb['is_sar'].max()
-        # track pattern ID for pattern-based splitting (use max to get the SAR pattern if any)
-        if self.split_by_pattern and 'pattern_id' in df_in.columns:
-            node_features['pattern_id'] = gb['pattern_id'].max()
         # concat features
         node_features_df = pd.concat(node_features, axis=1)
         # merge with nodes
@@ -515,7 +591,7 @@ class DataPreprocessor:
         # Validate feature values
         # 1. Amount-based features must be non-negative (only check numeric columns)
         amount_cols = [col for col in numeric_cols
-                      if col not in ['account', 'is_sar', 'pattern_id']
+                      if col not in ['account', 'is_sar']
                       and not any(p in col for p in ['burstiness_', 'time_skew_', 'volume_trend_'])]
         assert (df_nodes[amount_cols] < 0).sum().sum() == 0, 'There are negative values in amount-based features'
 
@@ -556,15 +632,9 @@ class DataPreprocessor:
         return edges
 
     def cal_edge_features(self, df: pd.DataFrame, start_step, end_step, directional: bool = False) -> pd.DataFrame:
-        # Validate window coverage
-        total_span = end_step - start_step + 1
-        if self.num_windows == 1 and self.window_len < total_span:
-            raise ValueError(f"Window configuration (num_windows={self.num_windows}, window_len={self.window_len}) "
-                           f"do not allow coverage of the full range [{start_step}, {end_step}] ({total_span} steps)")
-
         # Calculate windows - allow both overlapping and non-overlapping strategies
+        total_span = end_step - start_step + 1
         if self.num_windows > 1:
-            total_span = end_step - start_step + 1
             total_coverage = self.num_windows * self.window_len
 
             if total_coverage >= total_span:
@@ -647,7 +717,7 @@ class DataPreprocessor:
         appears in multiple splits (prevents data leakage). Otherwise, randomly
         splits SAR and normal nodes.
         """
-        if self.split_by_pattern and 'pattern_id' in df_nodes.columns:
+        if self.split_by_pattern:
             return self._create_masks_by_pattern(df_nodes)
         else:
             return self._create_masks_random(df_nodes)
@@ -700,21 +770,22 @@ class DataPreprocessor:
         }, index=df_nodes.index)
         df_nodes = pd.concat([df_nodes, mask_df], axis=1)
 
-        if self.verbose:
-            print(f"\nTransductive label splitting (random):")
-            print(f"  Total nodes: {n_nodes}, SAR nodes: {n_sar}, Normal nodes: {n_normal}")
-            print(f"  Train: {len(sar_train)} SAR + {len(normal_train)} normal = {train_mask.sum()}")
-            print(f"  Val:   {len(sar_val)} SAR + {len(normal_val)} normal = {val_mask.sum()}")
-            print(f"  Test:  {len(sar_test)} SAR + {len(normal_test)} normal = {test_mask.sum()}")
+        logger.info(f"\nTransductive label splitting (random):")
+        logger.info(f"  Total nodes: {n_nodes}, SAR nodes: {n_sar}, Normal nodes: {n_normal}")
+        logger.info(f"  Train: {len(sar_train)} SAR + {len(normal_train)} normal = {train_mask.sum()}")
+        logger.info(f"  Val:   {len(sar_val)} SAR + {len(normal_val)} normal = {val_mask.sum()}")
+        logger.info(f"  Test:  {len(sar_test)} SAR + {len(normal_test)} normal = {test_mask.sum()}")
 
         return df_nodes
 
     def _create_masks_by_pattern(self, df_nodes: pd.DataFrame):
         """
-        Split by pattern ID to ensure no pattern appears in multiple splits.
+        Split by pattern to prevent data leakage between train/val/test.
 
-        SAR patterns (pattern_id >= 0) are split by pattern, keeping all nodes
-        of a pattern together. Normal nodes (pattern_id < 0) are split randomly.
+        Uses alert_models.csv to get ground truth account-to-pattern mapping.
+        Patterns are split into train/val/test. For accounts in multiple patterns,
+        one pattern is chosen uniformly at random to determine the account's split.
+        Normal nodes use normal_models.csv if available, otherwise split randomly.
         """
         n_nodes = len(df_nodes)
         train_mask = np.zeros(n_nodes, dtype=bool)
@@ -723,46 +794,118 @@ class DataPreprocessor:
 
         np.random.seed(self.seed)
 
-        # Get unique SAR patterns (pattern_id >= 0)
-        sar_mask = df_nodes['pattern_id'] >= 0
-        sar_patterns = df_nodes.loc[sar_mask, 'pattern_id'].unique()
-        sar_patterns = np.random.permutation(sar_patterns)
+        # Load account-to-patterns mappings
+        sar_account_to_patterns = self.load_alert_models()
+        normal_account_to_patterns = self.load_normal_models()
 
-        n_patterns = len(sar_patterns)
-        n_patterns_train = int(self.transductive_train_fraction * n_patterns)
-        n_patterns_val = int(self.transductive_val_fraction * n_patterns)
+        if not sar_account_to_patterns:
+            logger.warning("No alert_models data found. Falling back to random SAR splitting.")
+            return self._create_masks_random(df_nodes)
 
-        train_patterns = set(sar_patterns[:n_patterns_train])
-        val_patterns = set(sar_patterns[n_patterns_train:n_patterns_train + n_patterns_val])
-        test_patterns = set(sar_patterns[n_patterns_train + n_patterns_val:])
+        # Split SAR patterns
+        sar_patterns = set()
+        for patterns in sar_account_to_patterns.values():
+            sar_patterns.update(patterns)
+        sar_patterns = list(np.random.permutation(list(sar_patterns)))
 
-        # Assign SAR nodes based on their pattern
+        n_sar_patterns = len(sar_patterns)
+        n_sar_patterns_train = int(self.transductive_train_fraction * n_sar_patterns)
+        n_sar_patterns_val = int(self.transductive_val_fraction * n_sar_patterns)
+
+        train_sar_patterns = set(sar_patterns[:n_sar_patterns_train])
+        val_sar_patterns = set(sar_patterns[n_sar_patterns_train:n_sar_patterns_train + n_sar_patterns_val])
+        test_sar_patterns = set(sar_patterns[n_sar_patterns_train + n_sar_patterns_val:])
+
+        # Split normal patterns (if available)
+        if normal_account_to_patterns:
+            normal_patterns = set()
+            for patterns in normal_account_to_patterns.values():
+                normal_patterns.update(patterns)
+            normal_patterns = list(np.random.permutation(list(normal_patterns)))
+
+            n_normal_patterns = len(normal_patterns)
+            n_normal_patterns_train = int(self.transductive_train_fraction * n_normal_patterns)
+            n_normal_patterns_val = int(self.transductive_val_fraction * n_normal_patterns)
+
+            train_normal_patterns = set(normal_patterns[:n_normal_patterns_train])
+            val_normal_patterns = set(normal_patterns[n_normal_patterns_train:n_normal_patterns_train + n_normal_patterns_val])
+            test_normal_patterns = set(normal_patterns[n_normal_patterns_train + n_normal_patterns_val:])
+        else:
+            n_normal_patterns = 0
+            train_normal_patterns = val_normal_patterns = test_normal_patterns = set()
+
+        # Identify SAR nodes
+        sar_mask = df_nodes['is_sar'] == 1
+
+        # Assign SAR nodes based on their pattern (random choice for accounts in multiple patterns)
+        n_sar_assigned = {'train': 0, 'val': 0, 'test': 0}
         for idx, row in df_nodes.iterrows():
             node_idx = df_nodes.index.get_loc(idx)
-            pattern = row['pattern_id']
-            if pattern >= 0:  # SAR node
-                if pattern in train_patterns:
-                    train_mask[node_idx] = True
-                elif pattern in val_patterns:
-                    val_mask[node_idx] = True
-                elif pattern in test_patterns:
-                    test_mask[node_idx] = True
+            if row['is_sar'] == 1:
+                account_id = row['account']
+                patterns = sar_account_to_patterns.get(account_id, set())
+                if patterns:
+                    pattern = np.random.choice(list(patterns))
+                    if pattern in train_sar_patterns:
+                        train_mask[node_idx] = True
+                        n_sar_assigned['train'] += 1
+                    elif pattern in val_sar_patterns:
+                        val_mask[node_idx] = True
+                        n_sar_assigned['val'] += 1
+                    elif pattern in test_sar_patterns:
+                        test_mask[node_idx] = True
+                        n_sar_assigned['test'] += 1
 
-        # Split normal nodes (pattern_id < 0) randomly
-        normal_indices = np.where(df_nodes['pattern_id'] < 0)[0]
-        normal_indices = np.random.permutation(normal_indices)
+        # Assign normal nodes based on their pattern (or randomly if no normal_models.csv)
+        n_normal_assigned = {'train': 0, 'val': 0, 'test': 0}
+        normal_indices = np.where(~sar_mask)[0]
 
-        n_normal = len(normal_indices)
-        n_normal_train = int(self.transductive_train_fraction * n_normal)
-        n_normal_val = int(self.transductive_val_fraction * n_normal)
+        if normal_account_to_patterns:
+            # Split normal nodes by pattern (random choice for accounts in multiple patterns)
+            for idx, row in df_nodes.iterrows():
+                node_idx = df_nodes.index.get_loc(idx)
+                if row['is_sar'] != 1:
+                    account_id = row['account']
+                    patterns = normal_account_to_patterns.get(account_id, set())
+                    if patterns:
+                        pattern = np.random.choice(list(patterns))
+                        if pattern in train_normal_patterns:
+                            train_mask[node_idx] = True
+                            n_normal_assigned['train'] += 1
+                        elif pattern in val_normal_patterns:
+                            val_mask[node_idx] = True
+                            n_normal_assigned['val'] += 1
+                        elif pattern in test_normal_patterns:
+                            test_mask[node_idx] = True
+                            n_normal_assigned['test'] += 1
+                    else:
+                        # Account not in normal_models.csv - assign randomly based on fractions
+                        r = np.random.random()
+                        if r < self.transductive_train_fraction:
+                            train_mask[node_idx] = True
+                            n_normal_assigned['train'] += 1
+                        elif r < self.transductive_train_fraction + self.transductive_val_fraction:
+                            val_mask[node_idx] = True
+                            n_normal_assigned['val'] += 1
+                        else:
+                            test_mask[node_idx] = True
+                            n_normal_assigned['test'] += 1
+        else:
+            # No normal_models.csv - split randomly
+            normal_indices = np.random.permutation(normal_indices)
+            n_normal = len(normal_indices)
+            n_normal_train = int(self.transductive_train_fraction * n_normal)
+            n_normal_val = int(self.transductive_val_fraction * n_normal)
 
-        normal_train = normal_indices[:n_normal_train]
-        normal_val = normal_indices[n_normal_train:n_normal_train + n_normal_val]
-        normal_test = normal_indices[n_normal_train + n_normal_val:]
+            train_mask[normal_indices[:n_normal_train]] = True
+            val_mask[normal_indices[n_normal_train:n_normal_train + n_normal_val]] = True
+            test_mask[normal_indices[n_normal_train + n_normal_val:]] = True
 
-        train_mask[normal_train] = True
-        val_mask[normal_val] = True
-        test_mask[normal_test] = True
+            n_normal_assigned = {
+                'train': n_normal_train,
+                'val': n_normal_val,
+                'test': n_normal - n_normal_train - n_normal_val
+            }
 
         # Add masks using concat to avoid fragmentation warning
         mask_df = pd.DataFrame({
@@ -772,20 +915,40 @@ class DataPreprocessor:
         }, index=df_nodes.index)
         df_nodes = pd.concat([df_nodes, mask_df], axis=1)
 
-        # Remove pattern_id from output (it was only needed for splitting)
-        df_nodes = df_nodes.drop(columns=['pattern_id'])
+        logger.info(f"\nTransductive label splitting (by pattern):")
+        logger.info(f"  Total nodes: {n_nodes}, SAR patterns: {n_sar_patterns}, Normal patterns: {n_normal_patterns}")
+        logger.info(f"  Train: {len(train_sar_patterns)} SAR patterns ({n_sar_assigned['train']} nodes) + "
+                   f"{len(train_normal_patterns)} normal patterns ({n_normal_assigned['train']} nodes) = {train_mask.sum()}")
+        logger.info(f"  Val:   {len(val_sar_patterns)} SAR patterns ({n_sar_assigned['val']} nodes) + "
+                   f"{len(val_normal_patterns)} normal patterns ({n_normal_assigned['val']} nodes) = {val_mask.sum()}")
+        logger.info(f"  Test:  {len(test_sar_patterns)} SAR patterns ({n_sar_assigned['test']} nodes) + "
+                   f"{len(test_normal_patterns)} normal patterns ({n_normal_assigned['test']} nodes) = {test_mask.sum()}")
 
-        if self.verbose:
-            n_sar_train = train_mask.sum() - len(normal_train)
-            n_sar_val = val_mask.sum() - len(normal_val)
-            n_sar_test = test_mask.sum() - len(normal_test)
-            print(f"\nTransductive label splitting (by pattern):")
-            print(f"  Total nodes: {n_nodes}, SAR patterns: {n_patterns}, Normal nodes: {n_normal}")
-            print(f"  Train: {len(train_patterns)} patterns ({n_sar_train} SAR nodes) + {len(normal_train)} normal = {train_mask.sum()}")
-            print(f"  Val:   {len(val_patterns)} patterns ({n_sar_val} SAR nodes) + {len(normal_val)} normal = {val_mask.sum()}")
-            print(f"  Test:  {len(test_patterns)} patterns ({n_sar_test} SAR nodes) + {len(normal_test)} normal = {test_mask.sum()}")
+        # Verify no account appears in multiple splits
+        all_train_patterns = train_sar_patterns | train_normal_patterns
+        all_val_patterns = val_sar_patterns | val_normal_patterns
+        all_test_patterns = test_sar_patterns | test_normal_patterns
+        self._verify_pattern_split(df_nodes, train_mask, val_mask, test_mask,
+                                   all_train_patterns, all_val_patterns, all_test_patterns)
 
         return df_nodes
+
+    def _verify_pattern_split(self, df_nodes: pd.DataFrame, train_mask, val_mask, test_mask,
+                               train_patterns: set, val_patterns: set, test_patterns: set):
+        """
+        Verify that pattern-based splitting has no account-level overlap.
+
+        With random assignment for multi-pattern accounts, patterns may be "incomplete"
+        across splits (some members in train, others in val). This is acceptable noise.
+        The critical check is that no single account appears in multiple splits.
+        """
+        # Verify no account appears in multiple splits (the real leakage concern)
+        multi_mask = (train_mask.astype(int) + val_mask.astype(int) + test_mask.astype(int)) > 1
+        if multi_mask.any():
+            overlap_accounts = df_nodes.loc[multi_mask, 'account'].tolist()
+            raise AssertionError(f"Accounts in multiple splits: {overlap_accounts[:10]}...")
+
+        logger.info("  ✓ Split verified: no account appears in multiple splits")
 
 
     def preprocess_transductive(self, df: pd.DataFrame):
@@ -849,11 +1012,10 @@ class DataPreprocessor:
         df_nodes_val = self.merge_static_features(df_nodes_val, df_static)
         df_nodes_test = self.merge_static_features(df_nodes_test, df_static)
 
-        if self.verbose:
-            print(f"\nInductive setting:")
-            print(f"  Train: {len(df_nodes_train)} nodes ({int(df_nodes_train['is_sar'].sum())} SAR)")
-            print(f"  Val:   {len(df_nodes_val)} nodes ({int(df_nodes_val['is_sar'].sum())} SAR)")
-            print(f"  Test:  {len(df_nodes_test)} nodes ({int(df_nodes_test['is_sar'].sum())} SAR)")
+        logger.info(f"\nInductive setting:")
+        logger.info(f"  Train: {len(df_nodes_train)} nodes ({int(df_nodes_train['is_sar'].sum())} SAR)")
+        logger.info(f"  Val:   {len(df_nodes_val)} nodes ({int(df_nodes_val['is_sar'].sum())} SAR)")
+        logger.info(f"  Test:  {len(df_nodes_test)} nodes ({int(df_nodes_test['is_sar'].sum())} SAR)")
 
         # Extract edge lists
         df_edges_train = self.extract_edge_list(df_train, self.train_start_step, self.train_end_step)
@@ -912,15 +1074,13 @@ class DataPreprocessor:
         try:
             import matplotlib.pyplot as plt
         except ImportError:
-            if self.verbose:
-                print("matplotlib not available, skipping feature analysis plots")
+            logger.info("matplotlib not available, skipping feature analysis plots")
             return
 
         import os
 
         if 'is_sar' not in df_nodes.columns:
-            if self.verbose:
-                print("No 'is_sar' column found, skipping feature analysis plots")
+            logger.info("No 'is_sar' column found, skipping feature analysis plots")
             return
 
         # Split into SAR and non-SAR
@@ -928,8 +1088,7 @@ class DataPreprocessor:
         non_sar_df = df_nodes[df_nodes['is_sar'] == 0]
 
         if len(sar_df) == 0 or len(non_sar_df) == 0:
-            if self.verbose:
-                print(f"Insufficient data for comparison (SAR: {len(sar_df)}, Non-SAR: {len(non_sar_df)})")
+            logger.info(f"Insufficient data for comparison (SAR: {len(sar_df)}, Non-SAR: {len(non_sar_df)})")
             return
 
         # Get numeric feature columns (exclude identifiers and labels)
@@ -939,49 +1098,45 @@ class DataPreprocessor:
         feature_cols = [c for c in numeric_cols if c not in exclude_cols]
 
         if len(feature_cols) == 0:
-            if self.verbose:
-                print("No numeric features to plot")
+            logger.info("No numeric features to plot")
             return
 
         # Group features by category for organized plotting
+        # Exclude city_* columns from main plot (handled separately in city analysis)
+        non_city_features = [c for c in feature_cols if not c.startswith('city_')]
+
         feature_groups = {
-            'Static': [c for c in feature_cols if c in ['age', 'salary']],
-            'Balance': [c for c in feature_cols if 'balance' in c],
-            'Incoming Amount': [c for c in feature_cols if any(p in c for p in ['sum_in', 'mean_in', 'median_in', 'std_in', 'max_in', 'min_in'])],
-            'Outgoing Amount': [c for c in feature_cols if any(p in c for p in ['sum_out', 'mean_out', 'median_out', 'std_out', 'max_out', 'min_out'])],
-            'Spending': [c for c in feature_cols if 'spending' in c],
-            'Counts': [c for c in feature_cols if 'count' in c],
-            'Timing': [c for c in feature_cols if any(p in c for p in ['first_step', 'last_step', 'time_span', 'time_std', 'gap'])],
-            'Burstiness': [c for c in feature_cols if any(p in c for p in ['burstiness', 'time_skew', 'volume_trend', 'activity_cv', 'n_active'])],
-            'Global': [c for c in feature_cols if c in ['counts_days_in_bank', 'counts_phone_changes']],
+            'Static': [c for c in non_city_features if c in ['age', 'salary', 'init_balance']],
+            'Balance': [c for c in non_city_features if 'balance' in c and c != 'init_balance'],
+            'Incoming Amount': [c for c in non_city_features if any(p in c for p in ['sum_in', 'mean_in', 'median_in', 'std_in', 'max_in', 'min_in'])],
+            'Outgoing Amount': [c for c in non_city_features if any(p in c for p in ['sum_out', 'mean_out', 'median_out', 'std_out', 'max_out', 'min_out'])],
+            'Spending': [c for c in non_city_features if 'spending' in c],
+            'Counts': [c for c in non_city_features if 'count' in c],
+            'Intra-Window Timing': [c for c in non_city_features if any(p in c for p in ['first_step', 'last_step', 'time_span', 'time_std', 'gap'])],
+            'Inter-Window Timing': [c for c in non_city_features if any(p in c for p in ['burstiness', 'time_skew', 'volume_trend', 'activity_cv', 'n_active'])],
+            'Global': [c for c in non_city_features if c in ['counts_days_in_bank', 'counts_phone_changes']],
         }
 
-        # Collect features that weren't categorized
+        # Collect features that weren't categorized (excluding city_* columns)
         categorized = set()
         for cols in feature_groups.values():
             categorized.update(cols)
-        uncategorized = [c for c in feature_cols if c not in categorized]
+        uncategorized = [c for c in non_city_features if c not in categorized]
         if uncategorized:
             feature_groups['Other'] = uncategorized
 
         # Remove empty groups
         feature_groups = {k: v for k, v in feature_groups.items() if v}
 
-        if self.verbose:
-            print(f"\nGenerating feature analysis plots: {len(sar_df)} SAR, {len(non_sar_df)} non-SAR accounts")
-            print(f"Feature groups: {', '.join(f'{k}({len(v)})' for k, v in feature_groups.items())}")
+        logger.info(f"\nGenerating feature analysis plots: {len(sar_df)} SAR, {len(non_sar_df)} non-SAR accounts")
+        logger.info(f"Feature groups: {', '.join(f'{k}({len(v)})' for k, v in feature_groups.items())}")
 
-        # Create figure with subplots for each group
-        n_groups = len(feature_groups)
-        fig, axes = plt.subplots(n_groups, 1, figsize=(14, 3 * n_groups))
-        if n_groups == 1:
-            axes = [axes]
-
+        os.makedirs(output_dir, exist_ok=True)
         summary_stats = []
+        saved_plots = []
 
-        for idx, (group_name, cols) in enumerate(feature_groups.items()):
-            ax = axes[idx]
-
+        # Create separate figure for each feature group
+        for group_name, cols in feature_groups.items():
             # Calculate median ratios for each feature
             ratios = []
             labels = []
@@ -1003,8 +1158,8 @@ class DataPreprocessor:
                     ratios.append(ratio)
                     # Shorten column name for display
                     short_name = col.replace('_', ' ').replace('  ', ' ')
-                    if len(short_name) > 25:
-                        short_name = short_name[:22] + '...'
+                    if len(short_name) > 30:
+                        short_name = short_name[:27] + '...'
                     labels.append(short_name)
 
                     summary_stats.append({
@@ -1016,6 +1171,10 @@ class DataPreprocessor:
                     })
 
             if ratios:
+                # Create figure sized to fit the features
+                fig_height = max(3, len(ratios) * 0.4)
+                fig, ax = plt.subplots(figsize=(10, fig_height))
+
                 # Color bars based on ratio (green = SAR higher, red = SAR lower)
                 colors = ['green' if r > 1.1 else 'red' if r < 0.9 else 'gray' for r in ratios]
 
@@ -1024,7 +1183,7 @@ class DataPreprocessor:
 
                 bars = ax.barh(range(len(ratios)), log_ratios, color=colors, alpha=0.7)
                 ax.set_yticks(range(len(ratios)))
-                ax.set_yticklabels(labels, fontsize=8)
+                ax.set_yticklabels(labels, fontsize=9)
                 ax.axvline(0, color='black', linestyle='-', linewidth=0.5)
                 ax.set_xlabel('Log2(SAR median / Non-SAR median)')
                 ax.set_title(f'{group_name} Features (n={len(cols)})')
@@ -1035,25 +1194,25 @@ class DataPreprocessor:
                     x_pos = width + 0.1 if width >= 0 else width - 0.1
                     ha = 'left' if width >= 0 else 'right'
                     ax.text(x_pos, bar.get_y() + bar.get_height()/2,
-                           f'{ratio:.2f}x', va='center', ha=ha, fontsize=7)
+                           f'{ratio:.2f}x', va='center', ha=ha, fontsize=8)
 
-        plt.tight_layout()
+                plt.tight_layout()
 
-        # Save plot
-        os.makedirs(output_dir, exist_ok=True)
-        plot_path = os.path.join(output_dir, 'feature_analysis.png')
-        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-        plt.close()
+                # Save plot with sanitized filename
+                safe_name = group_name.lower().replace(' ', '_').replace('-', '_')
+                plot_path = os.path.join(output_dir, f'features_{safe_name}.png')
+                plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+                plt.close()
+                saved_plots.append(plot_path)
 
-        if self.verbose:
-            print(f"Saved feature analysis plot to {plot_path}")
+        logger.info(f"Saved {len(saved_plots)} feature analysis plots to {output_dir}")
 
-            # Print top discriminative features
-            summary_stats.sort(key=lambda x: abs(np.log2(max(x['ratio'], 0.01)) if x['ratio'] > 0 else 10), reverse=True)
-            print("\nTop 10 most discriminative features (by median ratio):")
-            for stat in summary_stats[:10]:
-                direction = "SAR higher" if stat['ratio'] > 1 else "SAR lower"
-                print(f"  {stat['feature']}: {stat['ratio']:.2f}x ({direction})")
+        # Print top discriminative features
+        summary_stats.sort(key=lambda x: abs(np.log2(max(x['ratio'], 0.01)) if x['ratio'] > 0 else 10), reverse=True)
+        logger.info("\nTop 10 most discriminative features (by median ratio):")
+        for stat in summary_stats[:10]:
+            direction = "SAR higher" if stat['ratio'] > 1 else "SAR lower"
+            logger.info(f"  {stat['feature']}: {stat['ratio']:.2f}x ({direction})")
 
         # Plot city distribution if available (check for one-hot encoded city columns)
         city_cols = [col for col in df_nodes.columns if col.startswith('city_')]
@@ -1158,19 +1317,17 @@ class DataPreprocessor:
         plt.savefig(city_plot_path, dpi=150, bbox_inches='tight')
         plt.close()
 
-        if self.verbose:
-            print(f"Saved city analysis plot to {city_plot_path}")
+        logger.info(f"Saved city analysis plot to {city_plot_path}")
 
-            # Print city summary
-            print(f"\nCity Analysis (overall SAR rate: {overall_sar_rate:.1%}):")
-            print("  Cities with elevated SAR rates:")
-            for stat in city_stats[:5]:
-                if stat['sar_rate'] > overall_sar_rate:
-                    print(f"    {stat['city']}: {stat['sar_rate']:.1%} SAR rate ({stat['sar_count']}/{stat['total']} accounts)")
+        # Print city summary
+        logger.info(f"\nCity Analysis (overall SAR rate: {overall_sar_rate:.1%}):")
+        logger.info("  Cities with elevated SAR rates:")
+        for stat in city_stats[:5]:
+            if stat['sar_rate'] > overall_sar_rate:
+                logger.info(f"    {stat['city']}: {stat['sar_rate']:.1%} SAR rate ({stat['sar_count']}/{stat['total']} accounts)")
 
     def __call__(self, raw_data_file):
-        if self.verbose:
-            print('\nPreprocessing data...', end='')
+        logger.info('Preprocessing data...')
 
         # Derive static accounts path from tx_log path
         # tx_log: experiments/<exp>/temporal/tx_log.parquet
@@ -1179,11 +1336,12 @@ class DataPreprocessor:
         tx_path = Path(raw_data_file)
         experiment_dir = tx_path.parent.parent  # Go up from temporal/ to experiment root
         self.static_accounts_path = experiment_dir / 'spatial' / 'accounts.csv'
+        self.alert_models_path = experiment_dir / 'spatial' / 'alert_models.csv'
+        self.normal_models_path = experiment_dir / 'spatial' / 'normal_models.csv'
 
         raw_df = self.load_data(raw_data_file)
         preprocessed_df = self.preprocess(raw_df)
 
-        if self.verbose:
-            print(' done\n')
+        logger.info(' done\n')
 
         return preprocessed_df

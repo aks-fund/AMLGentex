@@ -6,14 +6,16 @@ import matplotlib.pyplot as plt
 import yaml
 import os
 import warnings
-import logging
 from tqdm.auto import tqdm as tqdm_auto
+from src.utils.logging import get_logger, set_verbosity
+
+logger = get_logger(__name__)
 
 class Optimizer():
     def __init__(self, data_conf_file, config, generator, preprocessor, target:float,
                  constraint_type:str, constraint_value:float, utility_metric:str,
                  model:str='DecisionTreeClassifier', bank=None, bo_dir:str='tmp',
-                 seed:int=0, num_trials_model:int=1, verbose:bool=False):
+                 seed:int=0, num_trials_model:int=1):
         """
         Data tuning optimizer.
 
@@ -31,7 +33,6 @@ class Optimizer():
             bo_dir: Directory for Bayesian optimization results
             seed: Random seed
             num_trials_model: Number of hyperparameter optimization trials per data trial
-            verbose: Whether to print detailed progress
 
         Examples:
             # Precision@K: Optimize data to achieve 80% precision in top 100 alerts
@@ -56,17 +57,12 @@ class Optimizer():
         self.bo_dir = bo_dir
         self.seed = seed
         self.num_trials_model = num_trials_model
-        self.verbose = verbose
 
-        # Suppress warnings and optuna logging unless verbose
-        if not verbose:
-            warnings.filterwarnings('ignore')
-            optuna.logging.set_verbosity(optuna.logging.WARNING)
-            # Set verbose=False on generator and preprocessor
-            if hasattr(self.generator, 'verbose'):
-                self.generator.verbose = False
-            if hasattr(self.preprocessor, 'verbose'):
-                self.preprocessor.verbose = False
+        # Configure quiet mode for optimization trials
+        warnings.filterwarnings('ignore')
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        # Set logging to WARNING level (quiet mode for trials)
+        set_verbosity(verbose=False)
     
     def _collect_bounds(self, bounds_dict, section=None, prefix=''):
         """Recursively collect bounds from nested dict structure.
@@ -165,15 +161,6 @@ class Optimizer():
         # Keep random seed fixed across trials for fair parameter comparison
         data_config['general']['random_seed'] = self.seed
 
-        # Print trial parameters if verbose
-        if self.verbose:
-            print(f"\n[Trial {trial.number}] Testing parameters:")
-            for k, v in updated_params.items():
-                if isinstance(v, float):
-                    print(f"  {k}: {v:.4f}")
-                else:
-                    print(f"  {k}: {v}")
-
         with open(self.data_conf_file, 'w') as f:
             yaml.dump(data_config, f, default_flow_style=False, sort_keys=False)
 
@@ -201,13 +188,9 @@ class Optimizer():
             else:
                 # Pick first bank by default
                 target_bank = banks[0]
-            if self.verbose:
-                print(f"Multiple banks detected. Tuning on bank: {target_bank}")
         else:
             # Single bank: use all data (that one bank)
             target_bank = banks[0]
-            if self.verbose:
-                print(f"Single bank detected. Tuning on all data (bank: {target_bank})")
 
         # Save preprocessed data for the selected bank
         os.makedirs(self.config['preprocess']['preprocessed_data_dir'], exist_ok=True)
@@ -249,7 +232,7 @@ class Optimizer():
             seed = self.seed,  # Same seed across trials for controlled comparison
             n_workers = 1,
             storage = storage,
-            verbose = self.verbose  # Pass through verbose flag to suppress nested progress bars
+            verbose = False  # Suppress progress bar during data tuning
         )
         best_trials = hyperparamtuner.optimize(n_trials=self.num_trials_model)
 
@@ -262,10 +245,6 @@ class Optimizer():
         # Store results in trial for callback access
         trial.set_user_attr('utility_metric', avg_utility)
         trial.set_user_attr('utility_loss', utility_loss)
-
-        if self.verbose:
-            print(f"  → Achieved {self.utility_metric}: {avg_utility:.4f} (target: {self.target:.4f}, loss: {utility_loss:.4f})")
-            print(f"  → Feature importance variance: {avg_feature_importances_error:.4f}\n")
 
         return utility_loss, avg_feature_importances_error
     
@@ -294,36 +273,33 @@ class Optimizer():
                 removed_files.append(filename)
 
         if removed_files and verbose:
-            print(f'\nCleaned up {len(removed_files)} intermediate files from {preprocessed_dir}')
+            logger.info(f'\nCleaned up {len(removed_files)} intermediate files from {preprocessed_dir}')
 
     def optimize(self, n_trials:int=10):
         # Store all BO results in bo_dir (e.g., experiments/{name}/data_tuning/)
         os.makedirs(self.bo_dir, exist_ok=True)
 
         # Generate baseline once (normal accounts + demographics, before alert injection)
-        if self.verbose:
-            print("Generating baseline graph (Phase 1)...")
+        print("Generating baseline graph (Phase 1)...")
         self.generator.run_spatial_baseline()
 
         storage = 'sqlite:///' + os.path.join(self.bo_dir, 'data_tuning_study.db')
         study = optuna.create_study(storage=storage, sampler=optuna.samplers.TPESampler(multivariate=True), study_name='data_tuning_study', directions=['minimize', 'minimize'], load_if_exists=True, pruner=optuna.pruners.HyperbandPruner())
 
-        # Print trial results as they complete
-        if not self.verbose:
-            trial_count = [0]  # Use list to allow modification in nested function
+        # Print trial results as they complete (always visible, even in non-verbose mode)
+        trial_count = [0]  # Use list to allow modification in nested function
 
-            def callback(study, trial):
-                trial_count[0] += 1
-                utility = trial.user_attrs.get('utility_metric', 0.0)
-                utility_loss = trial.user_attrs.get('utility_loss', 0.0)
-                print(f"Trial {trial_count[0]}/{n_trials}: {self.utility_metric}={utility:.3f}, loss={utility_loss:.3f}")
+        def callback(study, trial):
+            trial_count[0] += 1
+            utility = trial.user_attrs.get('utility_metric', 0.0)
+            utility_loss = trial.user_attrs.get('utility_loss', 0.0)
+            # Use print() to always show progress, regardless of logging level
+            print(f"Trial {trial_count[0]}/{n_trials}: {self.utility_metric}={utility:.3f}, loss={utility_loss:.3f}")
 
-            study.optimize(self.objective, n_trials=n_trials, callbacks=[callback], show_progress_bar=False)
-        else:
-            study.optimize(self.objective, n_trials=n_trials, show_progress_bar=False)
+        study.optimize(self.objective, n_trials=n_trials, callbacks=[callback], show_progress_bar=False)
 
         # Clean up intermediate preprocessed files (final cleanup with message)
-        self._cleanup_intermediate_files(verbose=self.verbose)
+        self._cleanup_intermediate_files(verbose=True)
 
         # Save pareto front plot
         # Format constraint string for plot
@@ -354,10 +330,10 @@ class Optimizer():
                 for param in trial.params:
                     f.write(f'{param}: {trial.params[param]}\n')
 
-        print(f'\nData tuning results saved to: {self.bo_dir}')
-        print(f'  - Database: data_tuning_study.db')
-        print(f'  - Pareto front: pareto_front.png')
-        print(f'  - Best trials: best_trials.txt')
+        logger.info(f'\nData tuning results saved to: {self.bo_dir}')
+        logger.info(f'  - Database: data_tuning_study.db')
+        logger.info(f'  - Pareto front: pareto_front.png')
+        logger.info(f'  - Best trials: best_trials.txt')
 
         return study.best_trials
 
@@ -410,18 +386,18 @@ class Optimizer():
         with open(self.data_conf_file, 'w') as f:
             yaml.dump(data_config, f, default_flow_style=False, sort_keys=False)
 
-        print(f'\n{"="*60}')
-        print(f'Updated {self.data_conf_file}')
-        print(f'Using trial {trial_number}:')
-        print(f'  {self.utility_metric.capitalize()} loss: {trial.values[0]:.4f}')
-        print(f'  Feature importance loss: {trial.values[1]:.4f}')
-        print(f'\nParameter changes:')
+        logger.info(f'\n{"="*60}')
+        logger.info(f'Updated {self.data_conf_file}')
+        logger.info(f'Using trial {trial_number}:')
+        logger.info(f'  {self.utility_metric.capitalize()} loss: {trial.values[0]:.4f}')
+        logger.info(f'  Feature importance loss: {trial.values[1]:.4f}')
+        logger.info(f'\nParameter changes:')
         for param, new_value in trial.params.items():
             old_value = old_values.get(param)
             old_str = f'{old_value:.4f}' if isinstance(old_value, float) else str(old_value) if old_value is not None else 'N/A'
             new_str = f'{new_value:.4f}' if isinstance(new_value, float) else str(new_value)
-            print(f'  {param}: {old_str} → {new_str}')
-        print(f'{"="*60}\n')
+            logger.info(f'  {param}: {old_str} → {new_str}')
+        logger.info(f'{"="*60}\n')
     
 
 

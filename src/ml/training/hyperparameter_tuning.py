@@ -1,6 +1,9 @@
 import optuna
-from src.utils import set_random_seed 
+from src.utils import set_random_seed
+from src.utils.logging import get_logger
 from typing import Any, Dict, List
+
+logger = get_logger(__name__)
 
 class HyperparamTuner():
     def __init__(self, study_name: str, obj_fn: Any, params: Dict, search_space: Dict, Client: Any, Model: Any, Server: Any = None, seed: int = 42, n_workers: int = None, storage: str = None, metrics: List[str] = ['average_precision'], verbose: bool = True):
@@ -67,6 +70,7 @@ if __name__ == '__main__':
     from pathlib import Path
     from src.ml import servers, clients, models
     from src.utils.config import load_training_config
+    from src.utils.logging import configure_logging
 
     mp.set_start_method('spawn', force=True)
 
@@ -95,6 +99,11 @@ if __name__ == '__main__':
         config_path = Path(args.config)
         experiment_name = config_path.parent.parent.name  # Extract experiment name from config path
         args.results_dir = f'experiments/{experiment_name}/results/{args.setting}/{args.model_type}'
+
+    # Configure logging with log file in results directory
+    os.makedirs(args.results_dir, exist_ok=True)
+    log_file = os.path.join(args.results_dir, 'tune_hyperparams.log')
+    configure_logging(verbose=True, log_file=log_file)
 
     t = time.time()
 
@@ -131,16 +140,16 @@ if __name__ == '__main__':
     
     t = time.time() - t
     
-    print('Done')
-    print(f'Exec time: {t:.2f}s')
+    logger.info('Done')
+    logger.info(f'Exec time: {t:.2f}s')
     best_trials_file = os.path.join(args.results_dir, 'best_trials.txt')
     with open(best_trials_file, 'w') as f:
         for trial in best_trials:
-            print(f'\ntrial: {trial.number}')
+            logger.info(f'trial: {trial.number}')
             f.write(f'\ntrial: {trial.number}\n')
-            print(f'values: {trial.values}')
+            logger.info(f'values: {trial.values}')
             f.write(f'values: {trial.values}\n')
             for param in trial.params:
                 f.write(f'{param}: {trial.params[param]}\n')
-                print(f'{param}: {trial.params[param]}')
-    print(f'Saved results to {best_trials_file}\n')
+                logger.info(f'{param}: {trial.params[param]}')
+    logger.info(f'Saved results to {best_trials_file}')

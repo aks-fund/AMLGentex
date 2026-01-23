@@ -52,8 +52,9 @@ def run_pipeline(config_path):
     print("PHASE 1: SPATIAL SIMULATION (Graph Generation)")
     print("=" * 60)
 
-    # Step 1.1: Generate degree distribution if needed
-    degree_path = Path(input_dir) / degree_file
+    # Step 1.1: Generate degree distribution if needed (goes to spatial output)
+    spatial_dir = config['spatial']['directory']
+    degree_path = Path(spatial_dir) / degree_file
     if not degree_path.exists():
         print(f"\n[1/3] Generating degree distribution...")
         start = time.time()

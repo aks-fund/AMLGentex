@@ -2,17 +2,19 @@ import argparse
 import matplotlib.pyplot as plt
 import multiprocessing as mp
 import numpy as np
+import os
 import yaml
 from src.ml import servers, clients, models
 from src.ml.training import centralized, federated, isolated
 from src.utils import get_optimal_params
+from src.utils.logging import configure_logging
 
 
 def main():
     mp.set_start_method('spawn', force=True)
-    
+
     EXPERIMENT = '12_banks_difficult'
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, help='Path to config file.', default=f'experiments/{EXPERIMENT}/config.yaml')
     parser.add_argument('--model_types', nargs='+', help='Types of models to train.', default=['LogisticRegressor', 'MLP', 'GCN', 'GAT', 'GraphSAGE']) # 'LogisticRegressor', 'MLP', 'GCN', 'GAT', 'GraphSAGE'
@@ -23,11 +25,16 @@ def main():
     parser.add_argument('--use_optimal_params', type=bool, help='Read the parameters from Optuna.', default=False)
     args = parser.parse_args()
     
+    # Configure logging with log file in results directory
+    os.makedirs(args.results_dir, exist_ok=True)
+    log_file = os.path.join(args.results_dir, 'train.log')
+    configure_logging(verbose=True, log_file=log_file)
+
     print('\nParsed arguments:')
     for arg, val in vars(args).items():
         print(f'{arg}: {val}')
     print()
-    
+
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
     

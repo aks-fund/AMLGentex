@@ -39,7 +39,7 @@ def test_config(test_config_path, project_root):
     test_temporal_dir = str(project_root / "tests" / "data_creation" / "parameters" / "small_test" / "temporal")
 
     conf['input']['directory'] = test_config_dir
-    conf['temporal']['directory'] = test_spatial_dir
+    conf['spatial']['directory'] = test_spatial_dir
     conf['output']['directory'] = test_temporal_dir
 
     return conf
@@ -150,8 +150,15 @@ def generate_test_data(request):
             Path(test_temporal_dir).mkdir(exist_ok=True)
 
             conf['input']['directory'] = test_config_dir
-            conf['temporal']['directory'] = test_spatial_dir
+            conf['spatial']['directory'] = test_spatial_dir
             conf['output']['directory'] = test_temporal_dir
+
+            # Copy degree.csv to spatial directory (generated files go to spatial output)
+            import shutil
+            degree_src = Path(test_config_dir) / 'degree.csv'
+            degree_dst = Path(test_spatial_dir) / 'degree.csv'
+            if degree_src.exists():
+                shutil.copy(degree_src, degree_dst)
 
             # Generate transaction graph
             txg = TransactionGenerator(conf, "test")
@@ -222,7 +229,7 @@ class TransactionGraphFixture:
         # Override paths for test structure (since it doesn't match the expected structure)
         test_config_dir = str(config_path.parent)
         conf['input']['directory'] = test_config_dir
-        conf['temporal']['directory'] = test_config_dir
+        conf['spatial']['directory'] = test_config_dir
         conf['output']['directory'] = test_config_dir
 
         self.txg = TransactionGenerator(conf, "test")

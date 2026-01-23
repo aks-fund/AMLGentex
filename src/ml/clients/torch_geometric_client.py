@@ -5,6 +5,9 @@ import torch_geometric.transforms
 from src.ml.models import losses
 from src.ml.metrics import average_precision_score
 from src.utils import dataloaders, decrease_lr, filter_args, graphdataset, set_random_seed, tensordatasets
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, precision_recall_curve, precision_score, recall_score, roc_curve, confusion_matrix
 from torch.utils.data import WeightedRandomSampler
 from tqdm import tqdm
@@ -88,7 +91,7 @@ class TorchGeometricClient():
         # This must happen BEFORE creating the model
         actual_input_dim = self.trainset.x.shape[1]
         if 'input_dim' in kwargs and kwargs['input_dim'] != actual_input_dim:
-            print(f"Warning: Configured input_dim={kwargs['input_dim']} doesn't match actual data dimension={actual_input_dim}. Using actual dimension.")
+            logger.warning(f"Configured input_dim={kwargs['input_dim']} doesn't match actual data dimension={actual_input_dim}. Using actual dimension.")
         kwargs['input_dim'] = actual_input_dim
 
         self.model = Model(**filter_args(Model, kwargs)).to(self.device)
@@ -97,9 +100,9 @@ class TorchGeometricClient():
         
         if criterion == 'ClassBalancedLoss':
             n_samples_per_classes = torch.bincount(self.trainset.y).tolist()
-            self.criterion = criterions.ClassBalancedLoss(n_samples_per_classes=n_samples_per_classes, gamma=kwargs.get('gamma', 0.9999))
+            self.criterion = losses.ClassBalancedLoss(n_samples_per_classes=n_samples_per_classes, gamma=kwargs.get('gamma', 0.9999))
         elif criterion == 'DAMLoss':
-            self.criterion = criterions.DAMLoss(class_counts=torch.bincount(self.trainset.y))
+            self.criterion = losses.DAMLoss(class_counts=torch.bincount(self.trainset.y))
         elif criterion == 'BCEWithLogitsLoss':
             Criterion = getattr(torch.nn, criterion)
             class_counts = torch.bincount(self.trainset.y)

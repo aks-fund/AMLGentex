@@ -24,9 +24,7 @@ from .ml_account_selector import MoneyLaunderingAccountSelector
 from .demographics_assigner import assign_kyc_from_demographics
 
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Attribute keys
 MAIN_ACCT_KEY = "main_acct"  # Main account ID (SAR typology subgraph attribute)
@@ -254,9 +252,9 @@ class TransactionGenerator:
         self.type_file = input_conf["transaction_type"]  # Transaction type
         self.is_aggregated = input_conf["is_aggregated_accounts"]  # Flag whether the account list is aggregated
 
-        # Get output file names
-        output_conf = self.conf["temporal"]  # The output directory of the graph generator is temporal one
-        self.output_dir = os.path.join(output_conf["directory"])  # The directory name of temporal files
+        # Get output file names (spatial simulation outputs)
+        output_conf = self.conf["spatial"]
+        self.output_dir = os.path.join(output_conf["directory"])  # Spatial output directory
         self.out_tx_file = output_conf["transactions"]  # All transaction list CSV file
         self.out_account_file = output_conf["accounts"]  # All account list CSV file
         self.out_alert_member_file = output_conf["alert_members"]  # Account list of AML typology members CSV file
@@ -532,7 +530,7 @@ class TransactionGenerator:
         TODO: Add options to call scale-free generator functions directly instead of loading degree CSV files
         :return: Directed graph as the base transaction graph (not complete transaction graph)
         """
-        deg_file = os.path.join(self.input_dir, self.degree_file) # read in degree.csv
+        deg_file = os.path.join(self.output_dir, self.degree_file)  # degree.csv is in spatial output
         in_deg, out_deg = get_degrees(deg_file, self.num_accounts) # read out the in and out degree distributions
         G = directed_configuration_model(in_deg, out_deg, self.seed)
         G = nx.DiGraph(G)
@@ -931,10 +929,10 @@ class TransactionGenerator:
 
         Args:
             checkpoint_path: Path to save checkpoint. If None, saves to
-                            {input_dir}/baseline_checkpoint.pkl
+                            {output_dir}/baseline_checkpoint.pkl
         """
         if checkpoint_path is None:
-            checkpoint_path = os.path.join(self.input_dir, 'baseline_checkpoint.pkl')
+            checkpoint_path = os.path.join(self.output_dir, 'baseline_checkpoint.pkl')
 
         checkpoint = {
             'graph': self.g,
@@ -966,10 +964,10 @@ class TransactionGenerator:
 
         Args:
             checkpoint_path: Path to checkpoint file. If None, loads from
-                            {input_dir}/baseline_checkpoint.pkl
+                            {output_dir}/baseline_checkpoint.pkl
         """
         if checkpoint_path is None:
-            checkpoint_path = os.path.join(self.input_dir, 'baseline_checkpoint.pkl')
+            checkpoint_path = os.path.join(self.output_dir, 'baseline_checkpoint.pkl')
 
         with open(checkpoint_path, 'rb') as f:
             checkpoint = pickle.load(f)
@@ -1672,21 +1670,16 @@ class TransactionGenerator:
                         % (th, num_fan_in, num_fan_out))
 
 
-def generate_transaction_graph_from_config(conf, sim_name=None, verbose=None):
+def generate_transaction_graph_from_config(conf, sim_name=None):
     """
     Generate transaction graph from config dictionary (with absolute paths).
 
     Args:
         conf: Configuration dictionary with absolute paths
         sim_name: Optional simulation name override
-        verbose: If True, generate diagnostic plots. If None, read from config.
     """
     if sim_name is None:
         sim_name = conf['general']['simulation_name']
-
-    # Read verbose from config if not explicitly provided
-    if verbose is None:
-        verbose = conf.get('general', {}).get('verbose', False)
 
     txg = TransactionGenerator(conf, sim_name)
     txg.set_num_accounts()  # Read out the number of accounts to be created
@@ -1699,7 +1692,7 @@ def generate_transaction_graph_from_config(conf, sim_name=None, verbose=None):
     txg.prepare_money_laundering_selector()  # Prepare ML account selector
     txg.load_alert_patterns()  # Load alert patterns CSV file and create AML typology subgraphs
     txg.propagate_sar_flags()  # Propagate SAR flags to main graph
-    txg.plot_ml_selection_analysis(verbose=verbose)  # Plot ML selection analysis (if verbose)
+    txg.plot_ml_selection_analysis()  # Plot ML selection analysis
     txg.mark_active_edges()  # mark all edges in the normal models as active
     txg.write_account_list()  # Export accounts to a CSV file
     txg.write_transaction_list()  # Export transactions to a CSV file
@@ -1760,7 +1753,7 @@ def generate_baseline(conf, sim_name=None, checkpoint_path=None):
         conf: Configuration dictionary with absolute paths
         sim_name: Optional simulation name override
         checkpoint_path: Path to save checkpoint. If None, saves to
-                        {input_dir}/baseline_checkpoint.pkl
+                        {output_dir}/baseline_checkpoint.pkl
 
     Returns:
         str: Path to saved checkpoint file
@@ -1786,7 +1779,7 @@ def generate_baseline(conf, sim_name=None, checkpoint_path=None):
     return saved_path
 
 
-def inject_alerts_from_baseline(conf, checkpoint_path=None, sim_name=None, verbose=None):
+def inject_alerts_from_baseline(conf, checkpoint_path=None, sim_name=None):
     """
     Inject alert patterns from a baseline checkpoint (Phase 2 for Bayesian optimization).
 
@@ -1805,19 +1798,14 @@ def inject_alerts_from_baseline(conf, checkpoint_path=None, sim_name=None, verbo
         conf: Configuration dictionary with absolute paths. The ml_account_selection
               section determines how accounts are selected for money laundering patterns.
         checkpoint_path: Path to baseline checkpoint. If None, loads from
-                        {input_dir}/baseline_checkpoint.pkl
+                        {output_dir}/baseline_checkpoint.pkl
         sim_name: Optional simulation name override
-        verbose: If True, generate diagnostic plots. If None, read from config.
 
     Returns:
         TransactionGenerator: The generator instance with injected alerts
     """
     if sim_name is None:
         sim_name = conf['general']['simulation_name']
-
-    # Read verbose from config if not explicitly provided
-    if verbose is None:
-        verbose = conf.get('general', {}).get('verbose', False)
 
     logger.info(f"Injecting alerts from baseline for {sim_name} (Phase 2)...")
 
@@ -1833,8 +1821,8 @@ def inject_alerts_from_baseline(conf, checkpoint_path=None, sim_name=None, verbo
     txg.load_alert_patterns()
     txg.propagate_sar_flags()  # Propagate SAR flags to main graph
 
-    # Generate analysis plots if verbose
-    txg.plot_ml_selection_analysis(verbose=verbose)
+    # Generate analysis plots
+    txg.plot_ml_selection_analysis()
 
     # Mark active edges and write outputs
     txg.mark_active_edges()

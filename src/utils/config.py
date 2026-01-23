@@ -197,7 +197,7 @@ def load_data_config(config_path: str) -> Dict:
 
     # Auto-construct paths based on experiment root
     config['input']['directory'] = str(experiment_root / 'config')
-    config['temporal']['directory'] = str(experiment_root / 'spatial')
+    config['spatial']['directory'] = str(experiment_root / 'spatial')
     config['output']['directory'] = str(experiment_root / 'temporal')
 
     return config

@@ -1,4 +1,7 @@
 from typing import Any, Dict
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 def centralized(seed: int, Client: Any, Model: Any, **kwargs) -> Dict[str, Dict]:
     
@@ -16,6 +19,7 @@ if __name__ == '__main__':
     from pathlib import Path
     from src.ml import clients, models
     from src.utils.config import load_training_config
+    from src.utils.logging import configure_logging
 
     EXPERIMENT = '3_banks_homo_mid'
     CLIENT_TYPE = 'TorchGeometricClient' # 'TorchClient', 'TorchGeometricClient'
@@ -36,6 +40,12 @@ if __name__ == '__main__':
         experiment_name = config_path.parent.parent.name  # Extract experiment name from config path
         args.results = f'experiments/{experiment_name}/results/centralized/{args.model_type}/results.pkl'
 
+    # Configure logging with log file in results directory
+    results_dir = os.path.dirname(args.results)
+    os.makedirs(results_dir, exist_ok=True)
+    log_file = os.path.join(results_dir, 'train.log')
+    configure_logging(verbose=True, log_file=log_file)
+
     t = time.time()
 
     # Load config with auto-discovery of paths
@@ -53,9 +63,8 @@ if __name__ == '__main__':
 
     t = time.time() - t
 
-    print('Done')
-    print(f'Exec time: {t:.2f}s')
-    os.makedirs(os.path.dirname(args.results), exist_ok=True)
+    logger.info('Done')
+    logger.info(f'Exec time: {t:.2f}s')
     with open(args.results, 'wb') as f:
         pickle.dump(results, f)
-    print(f'Saved results to {args.results}\n')
+    logger.info(f'Saved results to {args.results}')

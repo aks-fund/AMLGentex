@@ -5,11 +5,14 @@ import torch_geometric.transforms
 from src.ml.models import losses
 from src.ml.metrics import average_precision_score
 from src.utils import dataloaders, decrease_lr, filter_args, graphdataset, set_random_seed, tensordatasets
+from src.utils.logging import get_logger
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, precision_recall_curve, precision_score, recall_score, roc_curve, confusion_matrix
 from torch.utils.data import WeightedRandomSampler
 from tqdm import tqdm
 from typing import Any, Dict, List, Tuple
 from sklearn.preprocessing import MinMaxScaler
+
+logger = get_logger(__name__)
 
 class TorchClient():
     """
@@ -88,7 +91,7 @@ class TorchClient():
         # This must happen BEFORE creating the model
         actual_input_dim = self.trainset.tensors[0].shape[1]
         if 'input_dim' in kwargs and kwargs['input_dim'] != actual_input_dim:
-            print(f"Warning: Configured input_dim={kwargs['input_dim']} doesn't match actual data dimension={actual_input_dim}. Using actual dimension.")
+            logger.warning(f"Configured input_dim={kwargs['input_dim']} doesn't match actual data dimension={actual_input_dim}. Using actual dimension.")
         kwargs['input_dim'] = actual_input_dim
 
         self.model = Model(**filter_args(Model, kwargs)).to(self.device)
