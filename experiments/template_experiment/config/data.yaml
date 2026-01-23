@@ -82,7 +82,7 @@ optimisation_bounds:
       init_balance: [0.0, 0.2]
       salary: [0.0, 0.1]
       age: [0.0, 0.1]
-    participation_decay: [0.3, 0.9]
+    participation_decay: [0.1, 0.3]
 scale-free:
   gamma: 2.0
   loc: 1.0
