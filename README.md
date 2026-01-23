@@ -684,9 +684,9 @@ Loaded from `spatial/accounts.csv`:
 | `count_out_{w}` | Number of outgoing transactions |
 | `count_unique_out_{w}` | Unique receivers (out-degree) |
 
-**Timing Features (11 per direction × 2 = 22):**
+**Timing Features (11 per direction × 3 = 33):**
 
-For both incoming (`_in_`) and outgoing (`_out_`):
+For incoming (`_in_`), outgoing (`_out_`), and combined (`_combined_`):
 
 | Feature | Range | Description |
 |---------|-------|-------------|
@@ -702,15 +702,20 @@ For both incoming (`_in_`) and outgoing (`_out_`):
 | `max_gap_{dir}_{w}` | ≥0 | Longest gap |
 | `min_gap_{dir}_{w}` | ≥0 | Shortest gap |
 
-#### Inter-Window Features (6, only if W > 1)
+*Combined features (`_combined_`) capture cross-direction temporal patterns like receive-then-send behavior that separate in/out features miss.*
+
+#### Inter-Window Features (9, only if W > 1)
 | Feature | Description |
 |---------|-------------|
 | `n_active_windows_in` | Windows with incoming activity |
 | `n_active_windows_out` | Windows with outgoing activity |
+| `n_active_windows_combined` | Windows with any activity |
 | `window_activity_cv_in` | Coefficient of variation (incoming) |
 | `window_activity_cv_out` | Coefficient of variation (outgoing) |
+| `window_activity_cv_combined` | Coefficient of variation (all transactions) |
 | `volume_trend_in` | Activity trend over time (incoming) |
 | `volume_trend_out` | Activity trend over time (outgoing) |
+| `volume_trend_combined` | Activity trend over time (all transactions) |
 
 #### Global Features (2)
 | Feature | Description |
