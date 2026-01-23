@@ -105,8 +105,7 @@ class TestDataTunerCall:
                 model='DecisionTreeClassifier',
                 bo_dir='/tmp',
                 seed=42,
-                num_trials_model=10,
-                verbose=False
+                num_trials_model=10
             )
 
     def test_call_runs_optimization(self):
@@ -134,8 +133,9 @@ class TestDataTunerCall:
             # Verify optimize was called with correct n_trials
             mock_optimizer_instance.optimize.assert_called_once_with(n_trials=20)
 
-    def test_call_prints_best_trials(self, capsys):
-        """Test that calling tuner prints best trial information"""
+    def test_call_logs_best_trials(self, caplog):
+        """Test that calling tuner logs best trial information"""
+        import logging
         tuner = DataTuner(
             data_conf_file='/config.yaml',
             config={},
@@ -146,8 +146,7 @@ class TestDataTunerCall:
             model='DecisionTreeClassifier',
             bo_dir='/tmp',
             seed=42,
-            num_trials_model=10,
-            verbose=True  # Enable verbose to check printed output
+            num_trials_model=10
         )
 
         # Mock trial
@@ -161,19 +160,18 @@ class TestDataTunerCall:
             mock_optimizer_instance.optimize = Mock(return_value=[mock_trial])
             mock_optimizer_class.return_value = mock_optimizer_instance
 
-            tuner(n_trials=1)
+            with caplog.at_level(logging.INFO, logger='src.data_tuning.tuner'):
+                tuner(n_trials=1)
 
-        # Capture printed output
-        captured = capsys.readouterr()
+        # Verify trial information was logged
+        assert 'trial: 42' in caplog.text
+        assert 'values: [0.01, 0.05]' in caplog.text
+        assert 'param1: 100' in caplog.text
+        assert 'param2: 0.5' in caplog.text
 
-        # Verify trial information was printed
-        assert 'trial: 42' in captured.out
-        assert 'values: [0.01, 0.05]' in captured.out
-        assert 'param1: 100' in captured.out
-        assert 'param2: 0.5' in captured.out
-
-    def test_call_handles_multiple_trials(self, capsys):
+    def test_call_handles_multiple_trials(self, caplog):
         """Test that calling tuner handles multiple best trials"""
+        import logging
         tuner = DataTuner(
             data_conf_file='/config.yaml',
             config={},
@@ -184,8 +182,7 @@ class TestDataTunerCall:
             model='DecisionTreeClassifier',
             bo_dir='/tmp',
             seed=42,
-            num_trials_model=10,
-            verbose=True  # Enable verbose to check printed output
+            num_trials_model=10
         )
 
         # Mock multiple trials
@@ -204,13 +201,12 @@ class TestDataTunerCall:
             mock_optimizer_instance.optimize = Mock(return_value=[mock_trial1, mock_trial2])
             mock_optimizer_class.return_value = mock_optimizer_instance
 
-            tuner(n_trials=10)
+            with caplog.at_level(logging.INFO, logger='src.data_tuning.tuner'):
+                tuner(n_trials=10)
 
-        captured = capsys.readouterr()
-
-        # Verify both trials were printed
-        assert 'trial: 1' in captured.out
-        assert 'trial: 2' in captured.out
+        # Verify both trials were logged
+        assert 'trial: 1' in caplog.text
+        assert 'trial: 2' in caplog.text
 
     def test_call_returns_best_trials(self):
         """Test that __call__ returns best trials"""
