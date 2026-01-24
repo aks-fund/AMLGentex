@@ -115,7 +115,6 @@ class TestDAMLoss:
         # Higher scale should produce larger margins
         assert torch.all(loss_fn2.margins > loss_fn1.margins)
 
-    @pytest.mark.skip(reason="DAMLoss forward has shape mismatch bug - needs fix in source")
     def test_forward(self):
         """Test forward pass"""
         class_counts = torch.tensor([100.0, 10.0])
@@ -129,7 +128,6 @@ class TestDAMLoss:
         assert loss.shape == ()
         assert not torch.isnan(loss)
 
-    @pytest.mark.skip(reason="DAMLoss forward has shape mismatch bug - needs fix in source")
     def test_gradient_flows(self):
         """Test that gradients flow through the loss"""
         class_counts = torch.tensor([100.0, 10.0])
