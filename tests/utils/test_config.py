@@ -8,6 +8,7 @@ from pathlib import Path
 from src.utils.config import discover_clients, build_data_paths
 
 
+@pytest.mark.unit
 class TestDiscoverClients:
     """Tests for discover_clients function"""
 
@@ -54,6 +55,7 @@ class TestDiscoverClients:
         assert clients == ["alpha_bank", "beta_bank", "zebra_bank"]
 
 
+@pytest.mark.unit
 class TestBuildDataPaths:
     """Tests for build_data_paths function"""
 
