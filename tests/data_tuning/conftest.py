@@ -19,8 +19,10 @@ def sample_config_yaml():
             "num_accounts": 1000
         },
         "optimisation_bounds": {
-            "mean_amount": [500, 2000],
-            "std_amount": [100, 500]
+            "temporal": {
+                "mean_amount": [500, 2000],
+                "std_amount": [100, 500]
+            }
         }
     }
 

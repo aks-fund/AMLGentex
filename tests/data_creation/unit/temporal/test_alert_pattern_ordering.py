@@ -26,7 +26,9 @@ def create_accounts():
                 initial_balance=10000.0,
                 is_sar=True,
                 bank_id=f'BANK{i % 2}',
-                random_state=42
+                random_state=42,
+                salary=25000.0,
+                age=35
             )
             accounts.append((acc, i == 0))  # First is main
         return accounts

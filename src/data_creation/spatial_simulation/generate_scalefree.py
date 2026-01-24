@@ -183,11 +183,14 @@ def generate_degree_file_from_config(config):
 
     Args:
         config: Configuration dictionary with absolute paths
+
+    Note:
+        Degree file is written to spatial output directory, not the config directory.
     """
-    # Get number of accounts
-    directory = config["input"]["directory"]
+    # Get number of accounts from input directory
+    input_dir = config["input"]["directory"]
     accounts_file = config["input"]["accounts"]
-    accounts_path = os.path.join(directory, accounts_file)
+    accounts_path = os.path.join(input_dir, accounts_file)
 
     with open(accounts_path, "r") as rf:
         next(rf)  # skip header
@@ -200,10 +203,14 @@ def generate_degree_file_from_config(config):
     average_degree = scale_free_params["average_degree"]
     scale = (average_degree - loc) / (zeta(gamma) - 1)
 
-    # Get output path and seed
+    # Get output path (spatial output directory) and seed
+    output_dir = config["spatial"]["directory"]
     deg_file = config["input"]["degree"]
     seed = config["general"]["random_seed"]
-    deg_file_path = os.path.join(directory, deg_file)
+    deg_file_path = os.path.join(output_dir, deg_file)
+
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
 
     # Generate degree distribution
     values, counts = powerlaw_degree_distrubution(n, gamma, loc, scale, seed)

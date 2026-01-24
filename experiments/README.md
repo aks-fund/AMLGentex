@@ -36,8 +36,8 @@ experiment_name/
 ### Option 1: Copy Existing Experiment (Recommended)
 
 ```bash
-# Copy from 10k_accounts as a template
-cp -r experiments/10k_accounts experiments/my_experiment
+# Copy from template_experiment as a template
+cp -r experiments/template_experiment experiments/my_experiment
 
 # Edit configuration files
 cd experiments/my_experiment/config
@@ -69,7 +69,7 @@ cd experiments/my_experiment/config
      std_amount: 10
      mean_amount_sar: 643
      std_amount_sar: 320
-     # ... (see 10k_accounts/config/data.yaml for full template)
+     # ... (see template_experiment/config/data.yaml for full template)
 
    scale-free:
      gamma: 2.0
@@ -106,9 +106,9 @@ cd experiments/my_experiment/config
    include_edge_features: false
    ```
 
-3. **`models.yaml`** - Model configurations (copy from `10k_accounts/config/models.yaml`)
+3. **`models.yaml`** - Model configurations (copy from `template_experiment/config/models.yaml`)
 
-4. **CSV files** (copy from `10k_accounts/config/`):
+4. **CSV files** (copy from `template_experiment/config/`):
    - `accounts.csv` - Define number of accounts, initial balances, banks
    - `normalModels.csv` - Normal transaction patterns
    - `alertPatterns.csv` - SAR patterns
@@ -145,11 +145,11 @@ uv run python scripts/tune_data.py \
 
 ## Available Experiments
 
-### `10k_accounts/`
-Example experiment with 10,000 accounts. Use this as a template for new experiments.
+### `template_experiment/`
+Minimal template for creating new experiments. Copy this as a starting point.
 
-### `coarsening_easy/`
-Experiment with easier detection settings (coarsening).
+### `tutorial_demo/`
+Demo experiment used by the tutorial notebook. Small-scale example with transductive learning setup.
 
 ---
 
@@ -172,6 +172,6 @@ The `.gitignore` ensures that only `config/` directories are tracked, while all 
 ## Tips
 
 - **Start small**: Begin with a small experiment (e.g., 1000 accounts) to test configurations quickly
-- **Use templates**: Copy from `10k_accounts/config/` rather than creating from scratch
+- **Use templates**: Copy from `template_experiment/config/` rather than creating from scratch
 - **Parameter tuning**: Use `scripts/tune_data.py` to optimize data generation parameters
 - **Documentation**: Document your experiment's purpose and key parameters in comments within YAML files

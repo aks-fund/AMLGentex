@@ -9,8 +9,6 @@ import subprocess
 from pathlib import Path
 from src.utils.pattern_types import SAR_PATTERN_TYPES
 
-# Mark to skip conftest autouse fixture (we generate our own data)
-pytestmark = pytest.mark.usefixtures()
 
 
 @pytest.fixture(scope="module")

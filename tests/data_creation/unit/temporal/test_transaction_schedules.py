@@ -271,7 +271,8 @@ class TestForwardModelWithBurstiness:
         # Create third account
         account_3 = Account(
             account_id=3, customer_id=300, initial_balance=10000.0,
-            is_sar=False, bank_id='BANK001', random_state=42
+            is_sar=False, bank_id='BANK001', random_state=42,
+            salary=25000.0, age=35
         )
 
         accounts = [(sample_account, True), (sample_sar_account, False), (account_3, False)]

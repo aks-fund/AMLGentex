@@ -3,9 +3,14 @@ import os
 import yaml
 from src.feature_engineering import DataPreprocessor, summarize_dataset
 from src.utils.config import load_preprocessing_config
+from src.utils.logging import configure_logging
 from typing import Dict
 
-def main(config: Dict):
+def main(config: Dict, verbose: bool = False):
+    # Configure logging with log file in preprocessed data directory
+    log_file = os.path.join(config['preprocessed_data_dir'], 'preprocess.log')
+    os.makedirs(config['preprocessed_data_dir'], exist_ok=True)
+    configure_logging(verbose=verbose, log_file=log_file)
 
     preprocessor = DataPreprocessor(config)
     datasets = preprocessor(config['raw_data_file'])
@@ -50,15 +55,22 @@ def main(config: Dict):
     # Generate summary statistics
     summarize_dataset(config['preprocessed_data_dir'], raw_data_file=config['raw_data_file'])
 
+    # Generate feature analysis plots if verbose
+    if verbose:
+        train_nodes = datasets.get('trainset_nodes')
+        if train_nodes is not None:
+            preprocessor.plot_feature_analysis(train_nodes, config['preprocessed_data_dir'])
+
 if __name__ == "__main__":
 
     EXPERIMENT = '10k_accounts'
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, help='Path to preprocessing config file.', default=f'experiments/{EXPERIMENT}/config/preprocessing.yaml')
+    parser.add_argument('--verbose', action='store_true', help='Generate diagnostic plots comparing SAR vs non-SAR features')
     args = parser.parse_args()
 
     # Load config with auto-discovered paths
     config = load_preprocessing_config(args.config)
 
-    main(config)
+    main(config, verbose=args.verbose)

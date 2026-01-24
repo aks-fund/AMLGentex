@@ -11,8 +11,8 @@
 # =============================================================================
 
 # Time window aggregation for features
-num_windows: 4
-window_len: 25  # days
+num_windows: 1
+window_len: 100  # days
 
 # Include edge features (aggregated transaction statistics per edge)
 # When false: only edge topology (src, dst) is returned
@@ -53,7 +53,7 @@ seed: 42
 # Pattern-based splitting - keeps all nodes from the same SAR pattern together
 # Prevents data leakage where model sees part of a pattern in training
 # and is evaluated on other nodes from the same pattern
-split_by_pattern: false
+split_by_pattern: true
 
 # =============================================================================
 # INDUCTIVE SETTINGS (only used when learning_mode: inductive)

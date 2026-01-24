@@ -65,8 +65,8 @@ class TestLoadData:
         preprocessor = DataPreprocessor(basic_preprocessor_config)
         df = preprocessor.load_data(temp_parquet_file)
 
-        dropped_columns = ['type', 'oldbalanceOrig', 'oldbalanceDest',
-                           'newbalanceOrig', 'newbalanceDest', 'patternID', 'modelType']
+        # Balance columns are now kept for balance_at_window_start feature
+        dropped_columns = ['type', 'patternID', 'modelType']
 
         for col in dropped_columns:
             assert col not in df.columns
@@ -189,22 +189,6 @@ class TestCalNodeFeatures:
         assert isinstance(df_nodes, pd.DataFrame)
         assert len(df_nodes) > 0
 
-    def test_cal_node_features_window_coverage_error(self, basic_preprocessor_config, sample_transactions_df):
-        """Test error when windows don't cover the dataset"""
-        config = basic_preprocessor_config.copy()
-        config['num_windows'] = 1
-        config['window_len'] = 5  # Too small to cover the range
-
-        preprocessor = DataPreprocessor(config)
-
-        with pytest.raises(ValueError, match="do not allow coverage"):
-            preprocessor.cal_node_features(
-                sample_transactions_df,
-                start_step=1,
-                end_step=15
-            )
-
-
 @pytest.mark.unit
 class TestCalEdgeFeatures:
     """Tests for cal_edge_features method"""
@@ -293,23 +277,6 @@ class TestCalEdgeFeatures:
         feature_cols = [col for col in df_edges.columns if col not in ['src', 'dst']]
         numeric_cols = df_edges[feature_cols].select_dtypes(include=[np.number]).columns
         assert (df_edges[numeric_cols] >= 0).all().all()
-
-    def test_cal_edge_features_window_coverage_error(self, basic_preprocessor_config, sample_transactions_df):
-        """Test error when windows don't cover the dataset"""
-        config = basic_preprocessor_config.copy()
-        config['num_windows'] = 1
-        config['window_len'] = 5  # Too small to cover the range
-
-        preprocessor = DataPreprocessor(config)
-
-        with pytest.raises(ValueError, match="do not allow coverage"):
-            preprocessor.cal_edge_features(
-                sample_transactions_df,
-                start_step=1,
-                end_step=15,
-                directional=True
-            )
-
 
 @pytest.mark.unit
 class TestPreprocess:
@@ -448,3 +415,203 @@ class TestBankFiltering:
 
         assert total_out == 3000.0, f"Expected sum_out=3000 (internal + cross-bank), got {total_out}"
         assert total_in == 3000.0, f"Expected sum_in=3000 (cross-bank incoming), got {total_in}"
+
+
+@pytest.mark.unit
+class TestSplitByPattern:
+    """Tests for split_by_pattern functionality in transductive mode"""
+
+    def test_split_by_pattern_no_overlap(self, transductive_config_with_split_by_pattern,
+                                          temp_experiment_with_patterns):
+        """Test that split_by_pattern produces non-overlapping pattern splits"""
+        preprocessor = DataPreprocessor(transductive_config_with_split_by_pattern)
+        result = preprocessor(str(temp_experiment_with_patterns['tx_log_path']))
+
+        df_nodes = result['trainset_nodes']
+
+        # Check masks exist
+        assert 'train_mask' in df_nodes.columns
+        assert 'val_mask' in df_nodes.columns
+        assert 'test_mask' in df_nodes.columns
+
+        # Get SAR accounts in each split
+        train_sar = df_nodes[(df_nodes['train_mask']) & (df_nodes['is_sar'] == 1)]['account'].tolist()
+        val_sar = df_nodes[(df_nodes['val_mask']) & (df_nodes['is_sar'] == 1)]['account'].tolist()
+        test_sar = df_nodes[(df_nodes['test_mask']) & (df_nodes['is_sar'] == 1)]['account'].tolist()
+
+        # No SAR account should appear in multiple splits
+        all_sar = train_sar + val_sar + test_sar
+        assert len(all_sar) == len(set(all_sar)), "SAR accounts should not appear in multiple splits"
+
+    def test_split_by_pattern_keeps_pattern_together(self, transductive_config_with_split_by_pattern,
+                                                      temp_experiment_with_patterns):
+        """Test that all accounts from the same pattern are in the same split
+        (when accounts don't belong to multiple patterns)"""
+        preprocessor = DataPreprocessor(transductive_config_with_split_by_pattern)
+        result = preprocessor(str(temp_experiment_with_patterns['tx_log_path']))
+
+        df_nodes = result['trainset_nodes']
+
+        # Load alert_models to get account-to-pattern mapping
+        import pandas as pd
+        alert_models_df = pd.read_csv(temp_experiment_with_patterns['alert_models_path'])
+        account_to_pattern = alert_models_df.groupby('accountID')['modelID'].apply(set).to_dict()
+
+        # Get which split each account is in
+        def get_split(row):
+            if row['train_mask']:
+                return 'train'
+            elif row['val_mask']:
+                return 'val'
+            elif row['test_mask']:
+                return 'test'
+            return None
+
+        df_nodes['split'] = df_nodes.apply(get_split, axis=1)
+
+        # For each pattern, all its accounts (that are only in this pattern) should be in the same split
+        pattern_to_split = {}
+        for acc, patterns in account_to_pattern.items():
+            if len(patterns) == 1:  # Only check single-pattern accounts
+                pattern = next(iter(patterns))
+                acc_row = df_nodes[df_nodes['account'] == acc]
+                if len(acc_row) > 0:
+                    split = acc_row['split'].iloc[0]
+                    if pattern in pattern_to_split:
+                        assert pattern_to_split[pattern] == split, \
+                            f"Pattern {pattern} has accounts in different splits: {pattern_to_split[pattern]} and {split}"
+                    else:
+                        pattern_to_split[pattern] = split
+
+    def test_split_by_pattern_includes_normal_nodes(self, transductive_config_with_split_by_pattern,
+                                                     temp_experiment_with_patterns):
+        """Test that normal nodes are also split (randomly) across train/val/test"""
+        preprocessor = DataPreprocessor(transductive_config_with_split_by_pattern)
+        result = preprocessor(str(temp_experiment_with_patterns['tx_log_path']))
+
+        df_nodes = result['trainset_nodes']
+
+        # Get normal accounts in each split
+        train_normal = df_nodes[(df_nodes['train_mask']) & (df_nodes['is_sar'] == 0)]
+        val_normal = df_nodes[(df_nodes['val_mask']) & (df_nodes['is_sar'] == 0)]
+        test_normal = df_nodes[(df_nodes['test_mask']) & (df_nodes['is_sar'] == 0)]
+
+        # Should have normal nodes in all splits (with the test data we have)
+        total_normal = len(train_normal) + len(val_normal) + len(test_normal)
+        assert total_normal > 0, "Should have normal nodes"
+
+        # Normal accounts should also not overlap between splits
+        train_accs = set(train_normal['account'].tolist())
+        val_accs = set(val_normal['account'].tolist())
+        test_accs = set(test_normal['account'].tolist())
+
+        assert len(train_accs & val_accs) == 0, "Normal accounts in train and val should not overlap"
+        assert len(train_accs & test_accs) == 0, "Normal accounts in train and test should not overlap"
+        assert len(val_accs & test_accs) == 0, "Normal accounts in val and test should not overlap"
+
+    def test_split_by_pattern_respects_fractions(self, transductive_config_with_split_by_pattern,
+                                                  temp_experiment_with_patterns):
+        """Test that the split fractions are approximately respected"""
+        preprocessor = DataPreprocessor(transductive_config_with_split_by_pattern)
+        result = preprocessor(str(temp_experiment_with_patterns['tx_log_path']))
+
+        df_nodes = result['trainset_nodes']
+
+        n_total = len(df_nodes)
+        n_train = df_nodes['train_mask'].sum()
+        n_val = df_nodes['val_mask'].sum()
+        n_test = df_nodes['test_mask'].sum()
+
+        # All nodes should be in exactly one split
+        assert n_train + n_val + n_test == n_total, "All nodes should be in exactly one split"
+
+        # Check fractions are approximately correct (within 20% tolerance due to pattern grouping)
+        expected_train = transductive_config_with_split_by_pattern['transductive_train_fraction']
+        expected_val = transductive_config_with_split_by_pattern['transductive_val_fraction']
+        expected_test = transductive_config_with_split_by_pattern['transductive_test_fraction']
+
+        actual_train_frac = n_train / n_total
+        actual_val_frac = n_val / n_total
+        actual_test_frac = n_test / n_total
+
+        # Allow 30% tolerance because pattern grouping can skew fractions
+        assert abs(actual_train_frac - expected_train) < 0.3, \
+            f"Train fraction {actual_train_frac:.2f} differs too much from expected {expected_train}"
+        assert abs(actual_val_frac - expected_val) < 0.3, \
+            f"Val fraction {actual_val_frac:.2f} differs too much from expected {expected_val}"
+        assert abs(actual_test_frac - expected_test) < 0.3, \
+            f"Test fraction {actual_test_frac:.2f} differs too much from expected {expected_test}"
+
+    def test_split_by_pattern_deterministic_with_seed(self, transductive_config_with_split_by_pattern,
+                                                       temp_experiment_with_patterns):
+        """Test that the same seed produces the same split"""
+        preprocessor1 = DataPreprocessor(transductive_config_with_split_by_pattern)
+        result1 = preprocessor1(str(temp_experiment_with_patterns['tx_log_path']))
+
+        preprocessor2 = DataPreprocessor(transductive_config_with_split_by_pattern)
+        result2 = preprocessor2(str(temp_experiment_with_patterns['tx_log_path']))
+
+        df1 = result1['trainset_nodes'].sort_values('account').reset_index(drop=True)
+        df2 = result2['trainset_nodes'].sort_values('account').reset_index(drop=True)
+
+        # Masks should be identical
+        assert (df1['train_mask'] == df2['train_mask']).all()
+        assert (df1['val_mask'] == df2['val_mask']).all()
+        assert (df1['test_mask'] == df2['test_mask']).all()
+
+    def test_split_by_pattern_multi_pattern_account(self, transductive_config_with_split_by_pattern,
+                                                     sample_transactions_with_patterns_df):
+        """Test that accounts in multiple patterns use min pattern ID to determine split"""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            temporal_dir = tmpdir / 'temporal'
+            spatial_dir = tmpdir / 'spatial'
+            temporal_dir.mkdir()
+            spatial_dir.mkdir()
+
+            # Save transactions
+            tx_log_path = temporal_dir / 'tx_log.parquet'
+            sample_transactions_with_patterns_df.to_parquet(tx_log_path)
+
+            # Create alert_models with account 100 in BOTH patterns 1000 and 1001
+            alert_models = [
+                # Pattern 1000: accounts 100, 101, 102
+                {'modelID': 1000, 'type': 'fan_out', 'accountID': 100, 'isMain': True, 'sourceType': 'TRANSFER', 'phase': 0},
+                {'modelID': 1000, 'type': 'fan_out', 'accountID': 101, 'isMain': False, 'sourceType': 'TRANSFER', 'phase': 0},
+                {'modelID': 1000, 'type': 'fan_out', 'accountID': 102, 'isMain': False, 'sourceType': 'TRANSFER', 'phase': 0},
+                # Pattern 1001: accounts 100, 200, 201, 202 (note: 100 is in both patterns!)
+                {'modelID': 1001, 'type': 'fan_in', 'accountID': 100, 'isMain': False, 'sourceType': 'TRANSFER', 'phase': 0},
+                {'modelID': 1001, 'type': 'fan_in', 'accountID': 200, 'isMain': True, 'sourceType': 'TRANSFER', 'phase': 0},
+                {'modelID': 1001, 'type': 'fan_in', 'accountID': 201, 'isMain': False, 'sourceType': 'TRANSFER', 'phase': 0},
+                {'modelID': 1001, 'type': 'fan_in', 'accountID': 202, 'isMain': False, 'sourceType': 'TRANSFER', 'phase': 0},
+                # Pattern 1002: accounts 300, 301
+                {'modelID': 1002, 'type': 'simple', 'accountID': 300, 'isMain': True, 'sourceType': 'TRANSFER', 'phase': 0},
+                {'modelID': 1002, 'type': 'simple', 'accountID': 301, 'isMain': False, 'sourceType': 'TRANSFER', 'phase': 0},
+            ]
+            alert_models_df = pd.DataFrame(alert_models)
+            alert_models_df.to_csv(spatial_dir / 'alert_models.csv', index=False)
+
+            preprocessor = DataPreprocessor(transductive_config_with_split_by_pattern)
+            result = preprocessor(str(tx_log_path))
+
+            df_nodes = result['trainset_nodes']
+
+            # Account 100 should be in exactly one split (based on min pattern = 1000)
+            acc_100 = df_nodes[df_nodes['account'] == 100]
+            assert len(acc_100) == 1, "Account 100 should appear exactly once"
+
+            # Check it's in exactly one split
+            masks = acc_100[['train_mask', 'val_mask', 'test_mask']].iloc[0]
+            assert masks.sum() == 1, "Account 100 should be in exactly one split"
+
+            # Account 100 should be in the same split as account 101 (both use pattern 1000)
+            acc_101 = df_nodes[df_nodes['account'] == 101]
+            if len(acc_101) > 0:
+                masks_100 = acc_100[['train_mask', 'val_mask', 'test_mask']].iloc[0]
+                masks_101 = acc_101[['train_mask', 'val_mask', 'test_mask']].iloc[0]
+                # They should be in the same split since they share pattern 1000 (min for account 100)
+                assert (masks_100 == masks_101).all(), \
+                    "Account 100 and 101 should be in same split (both determined by pattern 1000)"

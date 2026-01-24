@@ -9,10 +9,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from src.data_creation import DataGenerator
 from src.feature_engineering import DataPreprocessor
 from src.data_tuning import DataTuner
+from src.utils.logging import configure_logging
 from time import time
 
 def main():
-
     EXPERIMENT = 'template_experiment'
 
     # Parse arguments
@@ -48,6 +48,11 @@ def main():
     if not os.path.isabs(args.bo_dir):
         args.bo_dir = os.path.abspath(args.bo_dir)
 
+    # Configure logging with log file in optimization directory
+    os.makedirs(args.bo_dir, exist_ok=True)
+    log_file = os.path.join(args.bo_dir, 'tune_data.log')
+    configure_logging(verbose=False, log_file=log_file)
+
     # Load configs with auto-discovery
     from src.utils.config import load_data_config, load_preprocessing_config
 
@@ -58,6 +63,9 @@ def main():
     with open(args.data_conf_file, 'w') as f:
         yaml.dump(data_config, f, default_flow_style=False, sort_keys=False)
 
+    # Temporarily enable verbose mode for upfront setup messages
+    configure_logging(verbose=True, log_file=log_file)
+
     generator = DataGenerator(args.data_conf_file)
 
     # Run spatial simulation once upfront (will be reused across all trials)
@@ -67,6 +75,9 @@ def main():
 
     preprocessing_config = load_preprocessing_config(args.preprocessing_config)
     preprocessor = DataPreprocessor(preprocessing_config)
+
+    # Switch back to quiet mode for optimization trials
+    configure_logging(verbose=False, log_file=log_file)
 
     with open(args.models_config, 'r') as f:
         models_config = yaml.safe_load(f)
