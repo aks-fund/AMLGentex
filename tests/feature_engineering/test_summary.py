@@ -20,6 +20,7 @@ from src.feature_engineering.summary import (
 )
 
 
+@pytest.mark.unit
 class TestGetDimensions:
     """Tests for _get_dimensions function"""
 
@@ -49,6 +50,7 @@ class TestGetDimensions:
         assert dims['edges_cols'] == 3
 
 
+@pytest.mark.unit
 class TestGetFileSizes:
     """Tests for _get_file_sizes function"""
 
@@ -100,6 +102,7 @@ class TestGetFileSizes:
         assert "MB" in sizes['nodes_size']
 
 
+@pytest.mark.unit
 class TestSummarizeNodes:
     """Tests for _summarize_nodes function"""
 
@@ -162,6 +165,7 @@ class TestSummarizeNodes:
         assert stats['sar_ratio'] == 0
 
 
+@pytest.mark.unit
 class TestSummarizeEdges:
     """Tests for _summarize_edges function"""
 
@@ -227,6 +231,7 @@ class TestSummarizeEdges:
         assert stats['avg_in_degree'] is None
 
 
+@pytest.mark.unit
 class TestComputeOverallStats:
     """Tests for _compute_overall_stats function"""
 
@@ -239,6 +244,7 @@ class TestComputeOverallStats:
         assert result == {}
 
 
+@pytest.mark.unit
 class TestWriteMarkdownReport:
     """Tests for _write_markdown_report function"""
 
@@ -305,6 +311,7 @@ class TestWriteMarkdownReport:
         assert "500" in content
 
 
+@pytest.mark.unit
 class TestSummarizeSplit:
     """Tests for _summarize_split function"""
 
@@ -351,6 +358,7 @@ class TestSummarizeSplit:
         assert split_stats['edges'] is None
 
 
+@pytest.mark.unit
 class TestSummarizeDataset:
     """Tests for summarize_dataset function"""
 
