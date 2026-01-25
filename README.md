@@ -158,10 +158,25 @@ The spatial stage creates the transaction network topology. This determines whic
 
 #### 1. Scale-Free Network Blueprint
 
-AMLGentex generates scale-free networks where node degree follows a power-law distribution. Three parameters control the topology:
-- **`gamma`**: Power-law exponent (typically 2.0-3.0)
-- **`loc`**: Minimum degree (offset for small degrees)
-- **`average_degree`**: Target mean degree of the network
+AMLGentex generates scale-free networks where node degree follows a truncated discrete power-law distribution:
+
+$$P(K=k) \propto k^{-\gamma}, \quad k \in \{k_{\min}, \ldots, k_{\max}\}$$
+
+**Parameters:**
+- **`kmin`**: Minimum degree (default: 1)
+- **`kmax`**: Maximum degree (default: n-1, capped for simple graphs)
+- **`gamma`**: Power-law exponent (optional - solved from average_degree if not provided)
+- **`average_degree`**: Target mean degree (specify this OR gamma)
+
+**Computing gamma from average_degree:**
+
+The expected degree for a given γ is:
+
+$$\mu(\gamma) = \frac{\sum_{k=k_{\min}}^{k_{\max}} k^{1-\gamma}}{\sum_{k=k_{\min}}^{k_{\max}} k^{-\gamma}}$$
+
+This function is strictly decreasing in γ: smaller γ → heavier tail → larger mean; larger γ → mass concentrates at k_min → smaller mean.
+
+Given a target average degree, we solve μ(γ) = target using Brent's method. Truncation (finite k_max) guarantees a finite mean for any γ > 0, and monotonicity ensures a unique solution.
 
 #### 2. Pattern Injection
 
