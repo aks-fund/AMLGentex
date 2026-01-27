@@ -19,8 +19,6 @@ LogisticRegressor:
     client_type: TorchClient
     server_type: TorchServer
     device: cuda:0
-    valset_size: 0.2
-    testset_size: 0.2
     lr_patience: 10
     es_patience: 300
     n_rounds: 300
@@ -39,8 +37,6 @@ MLP:
     client_type: TorchClient
     server_type: TorchServer
     device: cuda:0
-    valset_size: 0.2
-    testset_size: 0.2
     lr_patience: 10
     es_patience: 300
     n_rounds: 300
@@ -50,9 +46,9 @@ MLP:
     optimizer: Adam
     criterion: BCEWithLogitsLoss
     lr: 0.001
-    weight_decay: 0.1
-    n_hidden_layers: 3
-    hidden_dim: 100
+    weight_decay: 0.01
+    n_hidden_layers: 2
+    hidden_dim: 128
     output_dim: 1
   search_space:
     lr: {type: float, low: 0.00001, high: 0.01, log: true}
@@ -65,8 +61,6 @@ GCN:
     client_type: TorchGeometricClient
     server_type: TorchServer
     device: cuda:0
-    valset_size: 0.2
-    testset_size: 0.2
     lr_patience: 10
     es_patience: 300
     n_rounds: 300
@@ -74,10 +68,10 @@ GCN:
     eval_every: 5
     optimizer: Adam
     criterion: BCEWithLogitsLoss
-    lr: 0.0001
-    dropout: 0.9
-    n_conv_layers: 3
-    hidden_dim: 100
+    lr: 0.001
+    dropout: 0.3
+    n_conv_layers: 2
+    hidden_dim: 128
     output_dim: 1
   search_space:
     lr: {type: float, low: 0.0001, high: 0.1, log: true}
@@ -90,8 +84,6 @@ GAT:
     client_type: TorchGeometricClient
     server_type: TorchServer
     device: cuda:0
-    valset_size: 0.2
-    testset_size: 0.2
     lr_patience: 10
     es_patience: 300
     n_rounds: 300
@@ -99,10 +91,10 @@ GAT:
     eval_every: 5
     optimizer: Adam
     criterion: BCEWithLogitsLoss
-    lr: 0.0001
-    dropout: 0.9
-    n_conv_layers: 3
-    hidden_dim: 100
+    lr: 0.001
+    dropout: 0.3
+    n_conv_layers: 2
+    hidden_dim: 128
     output_dim: 1
   search_space:
     lr: {type: float, low: 0.0001, high: 0.1, log: true}
@@ -115,8 +107,6 @@ GraphSAGE:
     client_type: TorchGeometricClient
     server_type: TorchServer
     device: cuda:0
-    valset_size: 0.2
-    testset_size: 0.2
     lr_patience: 10
     es_patience: 300
     n_rounds: 300
@@ -124,10 +114,10 @@ GraphSAGE:
     eval_every: 5
     optimizer: Adam
     criterion: BCEWithLogitsLoss
-    lr: 0.0001
-    dropout: 0.9
-    n_conv_layers: 3
-    hidden_dim: 100
+    lr: 0.001
+    dropout: 0.3
+    n_conv_layers: 2
+    hidden_dim: 128
     output_dim: 1
   search_space:
     lr: {type: float, low: 0.0001, high: 0.1, log: true}
@@ -138,8 +128,6 @@ GraphSAGE:
 DecisionTreeClassifier:
   default:
     client_type: SklearnClient
-    valset_size: 0.2
-    testset_size: 0.2
     criterion: gini
     splitter: best
     random_state: 42
@@ -152,8 +140,6 @@ DecisionTreeClassifier:
 RandomForestClassifier:
   default:
     client_type: SklearnClient
-    valset_size: 0.2
-    testset_size: 0.2
     n_estimators: 100
     criterion: gini
     random_state: 42
@@ -165,8 +151,6 @@ RandomForestClassifier:
 GradientBoostingClassifier:
   default:
     client_type: SklearnClient
-    valset_size: 0.2
-    testset_size: 0.2
     loss: log_loss
     learning_rate: 0.1
     n_estimators: 100

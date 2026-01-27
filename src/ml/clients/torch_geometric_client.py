@@ -20,72 +20,67 @@ class TorchGeometricClient():
     PyTorchGeometric-specific client for training and evaluation. 
     Can run in isolation and federation.
     """
-    def __init__(self, id: str, seed: int, device: str, trainset_nodes: str, trainset_edges: str, Model: Any, optimizer: str, criterion: str, trainset_size: float = None, valset_nodes: str = None, valset_edges: str = None, valset_size: float = 0.0, testset_nodes: str = None, testset_edges: str = None, testset_size: float = 0.0, **kwargs):
+    def __init__(self, id: str, seed: int, device: str, trainset_nodes: str, trainset_edges: str, Model: Any, optimizer: str, criterion: str, valset_nodes: str = None, valset_edges: str = None, testset_nodes: str = None, testset_edges: str = None, **kwargs):
         self.id = id
         self.seed = seed
         self.device = device
         self.results = {}
-        
-        set_random_seed(self.seed)
-        
-        # Read and prepare node dataframes
-        train_nodes_df = pd.read_parquet(trainset_nodes).drop(columns=['bank']).rename(columns={'account': 'node'})
-        # Drop mask columns if present (for transductive learning)
-        mask_cols = [col for col in train_nodes_df.columns if col.endswith('_mask')]
-        if mask_cols:
-            train_nodes_df = train_nodes_df.drop(columns=mask_cols)
 
+        set_random_seed(self.seed)
+
+        # Read node dataframe to check for transductive mode
+        full_nodes_df = pd.read_parquet(trainset_nodes).drop(columns=['bank']).rename(columns={'account': 'node'})
         train_edges_df = pd.read_parquet(trainset_edges)
 
-        val_nodes_df = None
-        if valset_nodes is not None:
-            val_nodes_df = pd.read_parquet(valset_nodes).drop(columns=['bank']).rename(columns={'account': 'node'})
-            if mask_cols:
-                val_nodes_df = val_nodes_df.drop(columns=mask_cols)
-        val_edges_df = pd.read_parquet(valset_edges) if valset_edges is not None else None
+        # Transductive mode: masks present - use single graph with masks
+        if 'train_mask' in full_nodes_df.columns:
+            # Extract masks before dropping them
+            train_mask = torch.tensor(full_nodes_df['train_mask'].values, dtype=torch.bool)
+            val_mask = torch.tensor(full_nodes_df['val_mask'].values, dtype=torch.bool)
+            test_mask = torch.tensor(full_nodes_df['test_mask'].values, dtype=torch.bool)
 
-        test_nodes_df = None
-        if testset_nodes is not None:
-            test_nodes_df = pd.read_parquet(testset_nodes).drop(columns=['bank']).rename(columns={'account': 'node'})
-            if mask_cols:
-                test_nodes_df = test_nodes_df.drop(columns=mask_cols)
-        test_edges_df = pd.read_parquet(testset_edges) if testset_edges is not None else None
-        
-        self.trainset, self.valset, self.testset = graphdataset(train_nodes_df, train_edges_df, val_nodes_df, val_edges_df, test_nodes_df, test_edges_df, device=device)
-        if trainset_size is not None:
-            num_nodes = len(self.trainset.y)
-            neg_indices = torch.where(self.trainset.y == 0)[0]
-            pos_indices = torch.where(self.trainset.y == 1)[0]
-            neg_indices = neg_indices[torch.randperm(len(neg_indices))]
-            pos_indices = pos_indices[torch.randperm(len(pos_indices))]
-            num_pos = len(pos_indices)
-            num_neg = len(neg_indices)
-            neg_train_end = int(trainset_size * num_neg)
-            pos_train_end = int(trainset_size * num_pos)
-            neg_val_end = neg_train_end + int(valset_size * num_neg)
-            pos_val_end = pos_train_end + int(valset_size * num_pos)
-            neg_test_end = neg_val_end + int(testset_size * num_neg)
-            pos_test_end = pos_val_end + int(testset_size * num_pos)
-            neg_train_indices = neg_indices[:neg_train_end]
-            pos_train_indices = pos_indices[:pos_train_end]
-            neg_val_indices = neg_indices[neg_train_end:neg_val_end]
-            pos_val_indices = pos_indices[pos_train_end:pos_val_end]
-            neg_test_indices = neg_indices[neg_val_end:neg_test_end]
-            pos_test_indices = pos_indices[pos_val_end:pos_test_end]
-            train_mask = torch.zeros(num_nodes, dtype=torch.bool)
-            val_mask = torch.zeros(num_nodes, dtype=torch.bool)
-            test_mask = torch.zeros(num_nodes, dtype=torch.bool)
-            train_mask[neg_train_indices] = True
-            train_mask[pos_train_indices] = True
-            val_mask[neg_val_indices] = True
-            val_mask[pos_val_indices] = True
-            test_mask[neg_test_indices] = True
-            test_mask[pos_test_indices] = True
-            self.trainset.train_mask = train_mask
-            self.trainset.val_mask = val_mask
-            self.trainset.test_mask = test_mask
+            # Drop mask columns for feature processing
+            nodes_df = full_nodes_df.drop(columns=['train_mask', 'val_mask', 'test_mask'])
+
+            # Create single graph with all nodes
+            self.trainset, _, _ = graphdataset(nodes_df, train_edges_df, None, None, None, None, device=device)
+
+            # Attach masks to the graph
+            self.trainset.train_mask = train_mask.to(device)
+            self.trainset.val_mask = val_mask.to(device)
+            self.trainset.test_mask = test_mask.to(device)
+
+            # No separate val/test sets in transductive mode
+            self.valset = None
+            self.testset = None
         else:
-            self.trainset = torch_geometric.transforms.RandomNodeSplit(split='train_rest', num_val=valset_size, num_test=testset_size)(self.trainset)
+            # Inductive mode: separate graphs for train/val/test
+            train_nodes_df = full_nodes_df
+
+            val_nodes_df = None
+            val_edges_df = None
+            if valset_nodes is not None:
+                val_nodes_df = pd.read_parquet(valset_nodes).drop(columns=['bank']).rename(columns={'account': 'node'})
+                val_edges_df = pd.read_parquet(valset_edges) if valset_edges is not None else None
+
+            test_nodes_df = None
+            test_edges_df = None
+            if testset_nodes is not None:
+                test_nodes_df = pd.read_parquet(testset_nodes).drop(columns=['bank']).rename(columns={'account': 'node'})
+                test_edges_df = pd.read_parquet(testset_edges) if testset_edges is not None else None
+
+            self.trainset, self.valset, self.testset = graphdataset(
+                train_nodes_df, train_edges_df,
+                val_nodes_df, val_edges_df,
+                test_nodes_df, test_edges_df,
+                device=device
+            )
+
+            # For inductive mode, create masks for full train set
+            num_nodes = len(self.trainset.y)
+            self.trainset.train_mask = torch.ones(num_nodes, dtype=torch.bool, device=device)
+            self.trainset.val_mask = torch.zeros(num_nodes, dtype=torch.bool, device=device)
+            self.trainset.test_mask = torch.zeros(num_nodes, dtype=torch.bool, device=device)
 
         # Auto-detect input_dim from actual data (after dropping mask columns, etc.)
         # This must happen BEFORE creating the model

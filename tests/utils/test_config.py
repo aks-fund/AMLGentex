@@ -68,6 +68,8 @@ class TestBuildDataPaths:
         )
 
         assert "trainset_nodes" in paths
+        assert "valset_nodes" in paths
+        assert "testset_nodes" in paths
         assert "trainset_edges" not in paths
         assert "centralized" in paths["trainset_nodes"]
 
@@ -80,7 +82,25 @@ class TestBuildDataPaths:
         )
 
         assert "trainset_nodes" in paths
+        assert "valset_nodes" in paths
+        assert "testset_nodes" in paths
         assert "trainset_edges" in paths
+        assert "valset_edges" in paths
+        assert "testset_edges" in paths
+
+    def test_centralized_paths_sklearn(self, tmp_path):
+        """Test centralized paths for sklearn clients use different keys"""
+        paths = build_data_paths(
+            experiment_root=tmp_path,
+            client_type="SklearnClient",
+            setting="centralized"
+        )
+
+        # SklearnClient uses trainset/valset/testset (not *_nodes)
+        assert "trainset" in paths
+        assert "valset" in paths
+        assert "testset" in paths
+        assert "trainset_nodes" not in paths
 
     def test_federated_paths(self, tmp_path):
         """Test federated paths with explicit clients"""
@@ -95,6 +115,8 @@ class TestBuildDataPaths:
         assert "bank_A" in paths["clients"]
         assert "bank_B" in paths["clients"]
         assert "trainset_nodes" in paths["clients"]["bank_A"]
+        assert "valset_nodes" in paths["clients"]["bank_A"]
+        assert "testset_nodes" in paths["clients"]["bank_A"]
 
     def test_federated_paths_with_edges(self, tmp_path):
         """Test federated paths for GNN clients include edges"""
@@ -106,6 +128,8 @@ class TestBuildDataPaths:
         )
 
         assert "trainset_edges" in paths["clients"]["bank_A"]
+        assert "valset_edges" in paths["clients"]["bank_A"]
+        assert "testset_edges" in paths["clients"]["bank_A"]
 
     def test_isolated_paths(self, tmp_path):
         """Test isolated paths (same structure as federated)"""
@@ -118,6 +142,9 @@ class TestBuildDataPaths:
 
         assert "clients" in paths
         assert "bank_A" in paths["clients"]
+        assert "trainset_nodes" in paths["clients"]["bank_A"]
+        assert "valset_nodes" in paths["clients"]["bank_A"]
+        assert "testset_nodes" in paths["clients"]["bank_A"]
 
     def test_auto_discovers_clients(self, tmp_path):
         """Test that clients are auto-discovered if not provided"""

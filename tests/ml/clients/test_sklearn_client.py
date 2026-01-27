@@ -83,49 +83,39 @@ class TestSklearnClientInit:
         assert client.X_val.shape[0] == 20
         assert client.X_test.shape[0] == 30
 
-    def test_init_with_split_sizes(self, sample_train_data):
-        """Test initialization with split sizes"""
-        client = SklearnClient(
-            id='test_client',
-            seed=42,
-            trainset=sample_train_data,
-            valset_size=0.2,
-            testset_size=0.1,
-            Model=RandomForestClassifier,
-            n_estimators=10
-        )
-
-        # Original has 100 samples
-        # 20 for val, 10 for test, ~70 for train
-        assert client.X_val.shape[0] == 20
-        assert client.X_test.shape[0] == 10
-
-    def test_init_drops_mask_columns(self, tmp_path):
-        """Test that mask columns are dropped during init"""
-        # Need enough samples to split
+    def test_init_transductive_mode(self, tmp_path):
+        """Test transductive mode: single file with masks, splits by mask"""
         np.random.seed(42)
-        df = pd.DataFrame({
-            'account': [f'acc_{i}' for i in range(50)],
-            'bank': ['bank_A'] * 50,
-            'feature1': np.random.randn(50),
-            'is_sar': np.random.randint(0, 2, 50),
-            'train_mask': [True] * 50,
-            'val_mask': [False] * 50,
-            'test_mask': [False] * 50
+
+        # Create single file with all data and masks (transductive mode)
+        # 50 train, 20 val, 30 test
+        n_total = 100
+        full_df = pd.DataFrame({
+            'account': [f'acc_{i}' for i in range(n_total)],
+            'bank': ['bank_A'] * n_total,
+            'feature1': np.random.randn(n_total),
+            'is_sar': np.random.randint(0, 2, n_total),
+            'train_mask': [True] * 50 + [False] * 50,
+            'val_mask': [False] * 50 + [True] * 20 + [False] * 30,
+            'test_mask': [False] * 70 + [True] * 30
         })
-        path = tmp_path / "train_with_masks.parquet"
-        df.to_parquet(path)
+        data_path = tmp_path / "nodes_with_masks.parquet"
+        full_df.to_parquet(data_path)
 
         client = SklearnClient(
             id='test',
             seed=42,
-            trainset=str(path),
-            valset_size=0.2,
-            testset_size=0.1,
+            trainset=str(data_path),
+            valset=str(data_path),  # Same file in transductive mode
+            testset=str(data_path),
             Model=RandomForestClassifier,
             n_estimators=10
         )
 
+        # Should have correct split sizes
+        assert client.X_train.shape[0] == 50
+        assert client.X_val.shape[0] == 20
+        assert client.X_test.shape[0] == 30
         # Should have 1 feature (feature1), not masks
         assert client.X_train.shape[1] == 1
 

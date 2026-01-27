@@ -21,15 +21,13 @@ if __name__ == '__main__':
     from src.utils.config import load_training_config
     from src.utils.logging import configure_logging
 
-    EXPERIMENT = '3_banks_homo_mid'
-    CLIENT_TYPE = 'TorchGeometricClient' # 'TorchClient', 'TorchGeometricClient'
-    MODEL_TYPE = 'GraphSAGE' # 'LogisticRegressor', 'MLP', 'GCN', 'GAT', 'GraphSAGE'
+    EXPERIMENT = 'template_experiment'
+    MODEL_TYPE = 'GraphSAGE'
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, help='Path to models config file.', default=f'experiments/{EXPERIMENT}/config/models.yaml')
     parser.add_argument('--results', type=str, help='Path to results file.', default=None)
     parser.add_argument('--seed', type=int, help='Seed.', default=42)
-    parser.add_argument('--client_type', type=str, help='Client class.', default=CLIENT_TYPE)
     parser.add_argument('--model_type', type=str, help='Model class.', default=MODEL_TYPE)
     parser.add_argument('--device', type=str, help='Device to use (cpu, cuda:0, etc.)', default=None)
     args = parser.parse_args()
@@ -52,12 +50,11 @@ if __name__ == '__main__':
     kwargs = load_training_config(
         args.config,
         args.model_type,
-        setting='centralized',
-        client_type=args.client_type
+        setting='centralized'
     )
     if args.device is not None:
         kwargs['device'] = args.device
-    Client = getattr(clients, args.client_type)
+    Client = getattr(clients, kwargs['client_type'])
     Model = getattr(models, args.model_type)
     results = centralized(seed=args.seed, Client=Client, Model=Model, **kwargs)
 
