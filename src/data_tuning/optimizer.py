@@ -213,6 +213,8 @@ class Optimizer():
         # Update config with preprocessed data paths and utility metric parameters
         params = self.config[self.model]['default'].copy()
         params['trainset'] = os.path.join(self.config['preprocess']['preprocessed_data_dir'], 'trainset_nodes.parquet')
+        params['valset'] = os.path.join(self.config['preprocess']['preprocessed_data_dir'], 'valset_nodes.parquet')
+        params['testset'] = os.path.join(self.config['preprocess']['preprocessed_data_dir'], 'testset_nodes.parquet')
         params['save_utility_metric'] = True
         params['constraint_type'] = self.constraint_type
         params['constraint_value'] = self.constraint_value

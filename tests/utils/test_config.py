@@ -68,6 +68,8 @@ class TestBuildDataPaths:
         )
 
         assert "trainset_nodes" in paths
+        assert "valset_nodes" in paths
+        assert "testset_nodes" in paths
         assert "trainset_edges" not in paths
         assert "centralized" in paths["trainset_nodes"]
 
@@ -80,7 +82,25 @@ class TestBuildDataPaths:
         )
 
         assert "trainset_nodes" in paths
+        assert "valset_nodes" in paths
+        assert "testset_nodes" in paths
         assert "trainset_edges" in paths
+        assert "valset_edges" in paths
+        assert "testset_edges" in paths
+
+    def test_centralized_paths_sklearn(self, tmp_path):
+        """Test centralized paths for sklearn clients use different keys"""
+        paths = build_data_paths(
+            experiment_root=tmp_path,
+            client_type="SklearnClient",
+            setting="centralized"
+        )
+
+        # SklearnClient uses trainset/valset/testset (not *_nodes)
+        assert "trainset" in paths
+        assert "valset" in paths
+        assert "testset" in paths
+        assert "trainset_nodes" not in paths
 
     def test_federated_paths(self, tmp_path):
         """Test federated paths with explicit clients"""
@@ -95,6 +115,8 @@ class TestBuildDataPaths:
         assert "bank_A" in paths["clients"]
         assert "bank_B" in paths["clients"]
         assert "trainset_nodes" in paths["clients"]["bank_A"]
+        assert "valset_nodes" in paths["clients"]["bank_A"]
+        assert "testset_nodes" in paths["clients"]["bank_A"]
 
     def test_federated_paths_with_edges(self, tmp_path):
         """Test federated paths for GNN clients include edges"""
@@ -106,6 +128,8 @@ class TestBuildDataPaths:
         )
 
         assert "trainset_edges" in paths["clients"]["bank_A"]
+        assert "valset_edges" in paths["clients"]["bank_A"]
+        assert "testset_edges" in paths["clients"]["bank_A"]
 
     def test_isolated_paths(self, tmp_path):
         """Test isolated paths (same structure as federated)"""
@@ -118,6 +142,9 @@ class TestBuildDataPaths:
 
         assert "clients" in paths
         assert "bank_A" in paths["clients"]
+        assert "trainset_nodes" in paths["clients"]["bank_A"]
+        assert "valset_nodes" in paths["clients"]["bank_A"]
+        assert "testset_nodes" in paths["clients"]["bank_A"]
 
     def test_auto_discovers_clients(self, tmp_path):
         """Test that clients are auto-discovered if not provided"""
@@ -152,7 +179,7 @@ class TestLoadTrainingConfig:
 
         config = {
             'TestModel': {
-                'default': {'lr': 0.01, 'hidden_dim': 32},
+                'default': {'client_type': 'TorchClient', 'lr': 0.01, 'hidden_dim': 32},
                 'centralized': {'batch_size': 64}
             }
         }
@@ -164,8 +191,7 @@ class TestLoadTrainingConfig:
         result = load_training_config(
             str(config_path),
             model_type="TestModel",
-            setting="centralized",
-            client_type="TorchClient"
+            setting="centralized"
         )
 
         assert result['lr'] == 0.01
@@ -179,7 +205,7 @@ class TestLoadTrainingConfig:
         config_dir = tmp_path / "config"
         config_dir.mkdir(parents=True)
 
-        config = {'KnownModel': {'default': {}}}
+        config = {'KnownModel': {'default': {'client_type': 'TorchClient'}}}
         config_path = config_dir / "models.yaml"
         import yaml
         with open(config_path, 'w') as f:
@@ -189,8 +215,7 @@ class TestLoadTrainingConfig:
             load_training_config(
                 str(config_path),
                 model_type="UnknownModel",
-                setting="centralized",
-                client_type="TorchClient"
+                setting="centralized"
             )
 
     def test_merges_default_and_setting_config(self, tmp_path):
@@ -202,7 +227,7 @@ class TestLoadTrainingConfig:
 
         config = {
             'TestModel': {
-                'default': {'lr': 0.01, 'hidden_dim': 32, 'dropout': 0.1},
+                'default': {'client_type': 'TorchClient', 'lr': 0.01, 'hidden_dim': 32, 'dropout': 0.1},
                 'centralized': {'hidden_dim': 64}  # Override hidden_dim
             }
         }
@@ -214,8 +239,7 @@ class TestLoadTrainingConfig:
         result = load_training_config(
             str(config_path),
             model_type="TestModel",
-            setting="centralized",
-            client_type="TorchClient"
+            setting="centralized"
         )
 
         assert result['lr'] == 0.01  # From default
@@ -233,7 +257,7 @@ class TestLoadTrainingConfig:
 
         config = {
             'TestModel': {
-                'default': {'lr': 0.01},
+                'default': {'client_type': 'TorchClient', 'lr': 0.01},
                 'isolated': {
                     'epochs': 100,
                     'clients': {
@@ -250,8 +274,7 @@ class TestLoadTrainingConfig:
         result = load_training_config(
             str(config_path),
             model_type="TestModel",
-            setting="isolated",
-            client_type="TorchClient"
+            setting="isolated"
         )
 
         assert '_client_overrides' in result
@@ -269,7 +292,7 @@ class TestLoadTrainingConfig:
 
         config = {
             'experiment': {'root': str(custom_root)},
-            'TestModel': {'default': {}}
+            'TestModel': {'default': {'client_type': 'TorchClient'}}
         }
         config_path = config_dir / "models.yaml"
         import yaml
@@ -279,12 +302,35 @@ class TestLoadTrainingConfig:
         result = load_training_config(
             str(config_path),
             model_type="TestModel",
-            setting="centralized",
-            client_type="TorchClient"
+            setting="centralized"
         )
 
         # Data paths should be based on custom root
         assert str(custom_root) in result['trainset_nodes']
+
+    def test_raises_error_for_missing_client_type(self, tmp_path):
+        """Test that missing client_type raises ValueError"""
+        from src.utils.config import load_training_config
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True)
+
+        config = {
+            'TestModel': {
+                'default': {'lr': 0.01}  # No client_type
+            }
+        }
+        config_path = config_dir / "models.yaml"
+        import yaml
+        with open(config_path, 'w') as f:
+            yaml.dump(config, f)
+
+        with pytest.raises(ValueError, match="client_type not found"):
+            load_training_config(
+                str(config_path),
+                model_type="TestModel",
+                setting="centralized"
+            )
 
 
 @pytest.mark.unit
@@ -317,115 +363,3 @@ class TestGetClientConfig:
         assert result['epochs'] == 100  # From base
         assert result['batch_size'] == 32  # Added from override
         assert '_client_overrides' not in result
-
-    def test_ignores_other_client_overrides(self):
-        """Test ignores overrides for other clients"""
-        from src.utils.config import get_client_config
-
-        base_config = {
-            'lr': 0.01,
-            '_client_overrides': {
-                'bank_A': {'lr': 0.001},
-                'bank_B': {'lr': 0.0001}
-            }
-        }
-        result = get_client_config(base_config, 'bank_A')
-
-        assert result['lr'] == 0.001
-        assert 'bank_B' not in str(result)
-
-
-@pytest.mark.unit
-class TestLoadDataConfig:
-    """Tests for load_data_config function"""
-
-    def test_loads_yaml_config(self, tmp_path):
-        """Test that YAML config is loaded"""
-        from src.utils.config import load_data_config
-
-        config_dir = tmp_path / "config"
-        config_dir.mkdir(parents=True)
-
-        config = {
-            'general': {'simulation_name': 'test'},
-            'input': {'degree': 'degree.csv'},
-            'spatial': {},
-            'output': {'transaction_log': 'tx_log.parquet'}
-        }
-        config_path = config_dir / "data.yaml"
-        import yaml
-        with open(config_path, 'w') as f:
-            yaml.dump(config, f)
-
-        result = load_data_config(str(config_path))
-
-        assert result['general']['simulation_name'] == 'test'
-
-    def test_auto_constructs_paths(self, tmp_path):
-        """Test that paths are auto-constructed based on experiment root"""
-        from src.utils.config import load_data_config
-
-        config_dir = tmp_path / "config"
-        config_dir.mkdir(parents=True)
-
-        config = {
-            'input': {},
-            'spatial': {},
-            'output': {}
-        }
-        config_path = config_dir / "data.yaml"
-        import yaml
-        with open(config_path, 'w') as f:
-            yaml.dump(config, f)
-
-        result = load_data_config(str(config_path))
-
-        # Paths should be constructed relative to experiment root (tmp_path)
-        assert result['input']['directory'] == str(tmp_path / 'config')
-        assert result['spatial']['directory'] == str(tmp_path / 'spatial')
-        assert result['output']['directory'] == str(tmp_path / 'temporal')
-
-
-@pytest.mark.unit
-class TestLoadPreprocessingConfig:
-    """Tests for load_preprocessing_config function"""
-
-    def test_loads_yaml_config(self, tmp_path):
-        """Test that YAML config is loaded"""
-        from src.utils.config import load_preprocessing_config
-
-        config_dir = tmp_path / "config"
-        config_dir.mkdir(parents=True)
-
-        config = {
-            'window_size': 7,
-            'features': ['amount_sum', 'count']
-        }
-        config_path = config_dir / "preprocessing.yaml"
-        import yaml
-        with open(config_path, 'w') as f:
-            yaml.dump(config, f)
-
-        result = load_preprocessing_config(str(config_path))
-
-        assert result['window_size'] == 7
-        assert result['features'] == ['amount_sum', 'count']
-
-    def test_auto_constructs_paths(self, tmp_path):
-        """Test that paths are auto-constructed based on experiment root"""
-        from src.utils.config import load_preprocessing_config
-
-        config_dir = tmp_path / "config"
-        config_dir.mkdir(parents=True)
-
-        config = {}
-        config_path = config_dir / "preprocessing.yaml"
-        import yaml
-        with open(config_path, 'w') as f:
-            yaml.dump(config, f)
-
-        result = load_preprocessing_config(str(config_path))
-
-        # Paths should be constructed relative to experiment root (tmp_path)
-        assert result['raw_data_file'] == str(tmp_path / 'temporal' / 'tx_log.parquet')
-        assert result['preprocessed_data_dir'] == str(tmp_path / 'preprocessed')

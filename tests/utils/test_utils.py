@@ -58,7 +58,7 @@ class TestTensordatasets:
         return pd.DataFrame({
             'feature1': [1.0, 2.0, 3.0, 4.0],
             'feature2': [5.0, 6.0, 7.0, 8.0],
-            'label': [0, 1, 0, 1]
+            'is_sar': [0, 1, 0, 1]
         })
 
     @pytest.fixture
@@ -67,7 +67,7 @@ class TestTensordatasets:
         return pd.DataFrame({
             'feature1': [1.5, 2.5],
             'feature2': [5.5, 6.5],
-            'label': [0, 1]
+            'is_sar': [0, 1]
         })
 
     @pytest.fixture
@@ -76,7 +76,7 @@ class TestTensordatasets:
         return pd.DataFrame({
             'feature1': [3.5],
             'feature2': [7.5],
-            'label': [1]
+            'is_sar': [1]
         })
 
     def test_train_only(self, sample_train_df):
@@ -237,7 +237,7 @@ class TestGraphdataset:
             'node': ['A', 'B', 'C', 'D'],
             'feature1': [1.0, 2.0, 3.0, 4.0],
             'feature2': [5.0, 6.0, 7.0, 8.0],
-            'label': [0, 1, 0, 1]
+            'is_sar': [0, 1, 0, 1]
         })
         train_edges = pd.DataFrame({
             'src': ['A', 'B', 'C'],
@@ -291,7 +291,7 @@ class TestGraphdataset:
             'node': ['E', 'F'],
             'feature1': [5.0, 6.0],
             'feature2': [9.0, 10.0],
-            'label': [1, 0]
+            'is_sar': [1, 0]
         })
         val_edges = pd.DataFrame({
             'src': ['E'],
@@ -302,7 +302,7 @@ class TestGraphdataset:
             'node': ['G'],
             'feature1': [7.0],
             'feature2': [11.0],
-            'label': [1]
+            'is_sar': [1]
         })
         test_edges = pd.DataFrame({
             'src': [],

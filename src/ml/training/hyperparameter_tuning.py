@@ -74,19 +74,15 @@ if __name__ == '__main__':
 
     mp.set_start_method('spawn', force=True)
 
-    EXPERIMENT = '3_banks_homo_easy'
-    SETTING = 'federated' # 'centralized', 'federated', 'isolated'
-    SERVER_TYPE = 'TorchServer'
-    CLIENT_TYPE = 'TorchGeometricClient' # 'TorchClient', 'TorchGeometricClient'
-    MODEL_TYPE = 'GCN' # 'LogisticRegressor', 'MLP', 'GCN'
+    EXPERIMENT = 'template_experiment'
+    SETTING = 'centralized'
+    MODEL_TYPE = 'GraphSAGE'
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, help='Path to models config file.', default=f'experiments/{EXPERIMENT}/config/models.yaml')
     parser.add_argument('--study_name', type=str, help='Name of study.', default='hp_study')
-    parser.add_argument('--setting', type=str, help='Name of ojective function. Can be "centralized", "federated" or "isolated".', default=SETTING)
-    parser.add_argument('--client_type', type=str, help='Client class.', default=CLIENT_TYPE)
+    parser.add_argument('--setting', type=str, help='Training setting: "centralized", "federated" or "isolated".', default=SETTING)
     parser.add_argument('--model_type', type=str, help='Model class.', default=MODEL_TYPE)
-    parser.add_argument('--server_type', type=str, help='Server class.', default=SERVER_TYPE)
     parser.add_argument('--seed', type=int, help='Seed.', default=42)
     parser.add_argument('--n_workers', type=int, help='Number of workers. Defaults to number of clients.', default=None)
     parser.add_argument('--n_trials', type=int, help='Number of trials.', default=2)
@@ -111,8 +107,7 @@ if __name__ == '__main__':
     params = load_training_config(
         args.config,
         args.model_type,
-        setting=args.setting,
-        client_type=args.client_type
+        setting=args.setting
     )
     if args.device is not None:
         params['device'] = args.device
@@ -123,15 +118,15 @@ if __name__ == '__main__':
     search_space = config[args.model_type]['search_space']
     os.makedirs(args.results_dir, exist_ok=True)
     storage = 'sqlite:///' + os.path.join(args.results_dir, 'hp_study.db')
-    
+
     hyperparamtuner = HyperparamTuner(
         study_name = args.study_name,
         obj_fn = getattr(training, args.setting),
         params = params,
         search_space = search_space,
-        Client = getattr(clients, args.client_type),
+        Client = getattr(clients, params['client_type']),
         Model = getattr(models, args.model_type),
-        Server = getattr(servers, args.server_type),
+        Server = getattr(servers, params.get('server_type', 'TorchServer')),
         seed = args.seed,
         n_workers = args.n_workers,
         storage = storage
