@@ -53,15 +53,22 @@ def build_data_paths(
         clients = discover_clients(preprocessed_dir)
 
     # Determine path key names based on client type
-    # SklearnClient and TorchClient use trainset/valset/testset
+    # SklearnClient uses trainset/valset/testset (no edges)
+    # TorchClient uses trainset_nodes/valset_nodes/testset_nodes (no edges)
     # TorchGeometricClient uses trainset_nodes/valset_nodes/testset_nodes (plus edges)
+    is_sklearn = client_type == "SklearnClient"
     is_geometric = client_type == "TorchGeometricClient"
     needs_edges = is_geometric
 
     # Key names differ by client type
-    train_key = "trainset_nodes" if is_geometric else "trainset"
-    val_key = "valset_nodes" if is_geometric else "valset"
-    test_key = "testset_nodes" if is_geometric else "testset"
+    if is_sklearn:
+        train_key = "trainset"
+        val_key = "valset"
+        test_key = "testset"
+    else:  # TorchClient or TorchGeometricClient
+        train_key = "trainset_nodes"
+        val_key = "valset_nodes"
+        test_key = "testset_nodes"
 
     paths = {}
 
