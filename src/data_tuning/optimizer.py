@@ -295,10 +295,11 @@ class Optimizer():
             trial_count[0] += 1
             utility = trial.user_attrs.get('utility_metric', 0.0)
             utility_loss = trial.user_attrs.get('utility_loss', 0.0)
-            # Use print() to always show progress, regardless of logging level
-            print(f"Trial {trial_count[0]}/{n_trials}: {self.utility_metric}={utility:.3f}, loss={utility_loss:.3f}")
+            tqdm_auto.write(
+                f"Trial {trial_count[0]}/{n_trials}: {self.utility_metric}={utility:.3f}, loss={utility_loss:.3f}"
+            )
 
-        study.optimize(self.objective, n_trials=n_trials, callbacks=[callback], show_progress_bar=False)
+        study.optimize(self.objective, n_trials=n_trials, callbacks=[callback], show_progress_bar=True)
 
         # Clean up intermediate preprocessed files (final cleanup with message)
         self._cleanup_intermediate_files(verbose=True)

@@ -420,7 +420,7 @@ def generate_degree_file_from_config(config: dict) -> dict:
     )
 
     # Write degree distribution to file
-    with open(deg_file_path, "w") as wf:
+    with open(deg_file_path, "w", newline="") as wf:
         writer = csv.writer(wf)
         writer.writerow(["Count", "In-degree", "Out-degree"])
         for value, count in zip(values, counts):

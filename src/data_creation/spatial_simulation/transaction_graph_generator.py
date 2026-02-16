@@ -13,6 +13,7 @@ import sys
 import logging
 import pickle
 from scipy import stats
+from tqdm.auto import tqdm as tqdm_auto
 
 from collections import Counter, defaultdict
 
@@ -664,12 +665,15 @@ class TransactionGenerator:
     def build_normal_models(self):
         """ Go through the accounts and attach normal models to them
         """        
-        while(self.nominator.has_more()):
-            for type in self.nominator.types():
-                count = self.nominator.count(type)
-                if count > 0:
-                    success = self.choose_normal_model(type)
-                    self.normal_model_id += success
+        total_requested = sum(self.nominator.remaining_count_dict.values())
+        with tqdm_auto(total=total_requested, desc="Normal models", unit="model", leave=False) as normal_pbar:
+            while self.nominator.has_more():
+                for type in self.nominator.types():
+                    count = self.nominator.count(type)
+                    if count > 0:
+                        success = self.choose_normal_model(type)
+                        self.normal_model_id += success
+                        normal_pbar.update(1)
         logger.info(f"Generated {len(self.normal_models)} normal models.")
         logger.info("Normal model counts %s", self.nominator.used_count_dict)
         return self.normal_models # just to get access in unit test, probably not a good solution
@@ -1040,34 +1044,39 @@ class TransactionGenerator:
                 else:
                     logger.warning("Unknown column name in %s: %s" % (alert_file, k))
 
+            # Pre-load non-comment rows so we can compute an accurate total progress target.
+            rows = [row for row in reader if len(row) > 0 and not row[0].startswith("#")]
+            total_patterns = sum(int(row[idx_num]) for row in rows)
+
             # Generate transaction set
             count = 0
-            for row in reader:
-                if len(row) == 0 or row[0].startswith("#"):
-                    continue
-                num_patterns = int(row[idx_num])  # Number of alert patterns
-                typology_name = row[idx_type]
-                # schedule_id, min_period, max_period now optional (timing generated in temporal simulation)
-                schedule = int(row[idx_schedule]) if idx_schedule is not None else 2  # Default: unordered
-                min_accts = int(row[idx_min_accts])
-                max_accts = int(row[idx_max_accts])
-                min_period = parse_int(row[idx_min_period]) if idx_min_period is not None else 0
-                max_period = parse_int(row[idx_max_period]) if idx_max_period is not None else 100
-                bank_id = row[idx_bank] if idx_bank is not None else ""  # If empty, it has inter-bank transactions
-                is_sar = parse_flag(row[idx_sar])
-                source_type = row[idx_source_type]
+            with tqdm_auto(total=total_patterns, desc="Alert patterns", unit="pattern", leave=False) as alert_pbar:
+                for row in rows:
+                    num_patterns = int(row[idx_num])  # Number of alert patterns
+                    typology_name = row[idx_type]
+                    # schedule_id, min_period, max_period now optional (timing generated in temporal simulation)
+                    schedule = int(row[idx_schedule]) if idx_schedule is not None else 2  # Default: unordered
+                    min_accts = int(row[idx_min_accts])
+                    max_accts = int(row[idx_max_accts])
+                    min_period = parse_int(row[idx_min_period]) if idx_min_period is not None else 0
+                    max_period = parse_int(row[idx_max_period]) if idx_max_period is not None else 100
+                    bank_id = row[idx_bank] if idx_bank is not None else ""  # If empty, it has inter-bank transactions
+                    is_sar = parse_flag(row[idx_sar])
+                    source_type = row[idx_source_type]
 
-                if typology_name not in self.alert_types:
-                    logger.warning("Pattern type name (%s) must be one of %s"
-                                   % (typology_name, str(self.alert_types.keys())))
-                    continue
-                # Generate alert patterns
-                for i in range(num_patterns):
-                    num_accts = random.randrange(min_accts, max_accts + 1) # Number of accounts
-                    self.add_aml_typology(is_sar, typology_name, num_accts, min_period, max_period, bank_id, schedule, source_type)
-                    count += 1
-                    if count % 1000 == 0:
-                        logger.info("Created %d alerts" % count)
+                    if typology_name not in self.alert_types:
+                        logger.warning("Pattern type name (%s) must be one of %s"
+                                       % (typology_name, str(self.alert_types.keys())))
+                        alert_pbar.update(num_patterns)
+                        continue
+                    # Generate alert patterns
+                    for i in range(num_patterns):
+                        num_accts = random.randrange(min_accts, max_accts + 1) # Number of accounts
+                        self.add_aml_typology(is_sar, typology_name, num_accts, min_period, max_period, bank_id, schedule, source_type)
+                        count += 1
+                        alert_pbar.update(1)
+                        if count % 1000 == 0:
+                            logger.info("Created %d alerts" % count)
 
     def add_aml_typology(self, is_sar, typology_name, num_accounts, min_period, max_period, bank_id="", schedule=1, source_type='TRANSFER'):
         """Add an AML typology transaction set (graph structure only, amounts sampled in temporal simulation)
@@ -1562,7 +1571,14 @@ class TransactionGenerator:
             writer = csv.writer(wf)
             base_attrs = ["ACCOUNT_ID", "CUSTOMER_ID", "INIT_BALANCE", "SALARY", "AGE", "CITY", "IS_SAR", "BANK_ID"]
             writer.writerow(base_attrs + self.attr_names) # add user-defined attributes
-            for n in self.g.nodes(data=True): # loop over all nodes with access to their attributes
+            node_iter = tqdm_auto(
+                self.g.nodes(data=True),
+                total=self.g.number_of_nodes(),
+                desc="Write accounts",
+                unit="acct",
+                leave=False,
+            )
+            for n in node_iter: # loop over all nodes with access to their attributes
                 aid = n[0]  # Account ID
                 cid = "C_" + str(aid)  # Customer ID bounded to this account
                 prop = n[1]  # Account attributes
@@ -1585,7 +1601,14 @@ class TransactionGenerator:
         with open(tx_file, "w") as wf:
             writer = csv.writer(wf)
             writer.writerow(["id", "src", "dst", "ttype"])
-            for e in self.g.edges(data=True): # go through all transactions in graph
+            edge_iter = tqdm_auto(
+                self.g.edges(data=True),
+                total=self.g.number_of_edges(),
+                desc="Write transactions",
+                unit="edge",
+                leave=False,
+            )
+            for e in edge_iter: # go through all transactions in graph
                 src = e[0]
                 dst = e[1]
                 attr = e[2]
@@ -1686,22 +1709,29 @@ def generate_transaction_graph_from_config(conf, sim_name=None):
         sim_name = conf['general']['simulation_name']
 
     txg = TransactionGenerator(conf, sim_name)
-    txg.set_num_accounts()  # Read out the number of accounts to be created
-    txg.generate_normal_transactions()  # Load a parameter CSV file for the base transaction types
-    txg.load_account_list()  # Load account list CSV file and write accounts to nodes in network
-    txg.load_normal_models()  # Load a parameter CSV file for Normal Models
-    txg.build_normal_models()  # Build normal models from the base transaction types
-    txg.set_main_acct_candidates()  # Identify accounts with large amounts of in and out edges
-    txg.assign_demographics()  # Assign age/salary/balance from demographics
-    txg.prepare_money_laundering_selector()  # Prepare ML account selector
-    txg.load_alert_patterns()  # Load alert patterns CSV file and create AML typology subgraphs
-    txg.propagate_sar_flags()  # Propagate SAR flags to main graph
-    txg.plot_ml_selection_analysis()  # Plot ML selection analysis
-    txg.mark_active_edges()  # mark all edges in the normal models as active
-    txg.write_account_list()  # Export accounts to a CSV file
-    txg.write_transaction_list()  # Export transactions to a CSV file
-    txg.write_alert_account_list()  # Export alert accounts to a CSV file
-    txg.write_normal_models()
+    stages = [
+        ("Count accounts", txg.set_num_accounts),
+        ("Generate base graph", txg.generate_normal_transactions),
+        ("Load accounts", txg.load_account_list),
+        ("Load normal model params", txg.load_normal_models),
+        ("Build normal models", txg.build_normal_models),
+        ("Set main account candidates", txg.set_main_acct_candidates),
+        ("Assign demographics", txg.assign_demographics),
+        ("Prepare ML selector", txg.prepare_money_laundering_selector),
+        ("Load alert patterns", txg.load_alert_patterns),
+        ("Propagate SAR flags", txg.propagate_sar_flags),
+        ("Plot ML analysis", txg.plot_ml_selection_analysis),
+        ("Mark active edges", txg.mark_active_edges),
+        ("Write account list", txg.write_account_list),
+        ("Write transaction list", txg.write_transaction_list),
+        ("Write alert model list", txg.write_alert_account_list),
+        ("Write normal model list", txg.write_normal_models),
+    ]
+    with tqdm_auto(total=len(stages), desc="Spatial stages", unit="stage") as stage_bar:
+        for stage_name, stage_fn in stages:
+            stage_bar.set_postfix_str(stage_name)
+            stage_fn()
+            stage_bar.update(1)
 
 def generate_transaction_graph(conf_file, verbose=None):
     """Generate transaction graph from config file path (for CLI usage).

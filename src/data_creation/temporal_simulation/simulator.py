@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 from collections import defaultdict
+from tqdm.auto import tqdm as tqdm_auto
 from .account import Account
 from .alert_patterns import AlertPattern
 from .normal_models import (
@@ -584,7 +585,8 @@ class AMLSimulator:
             })
 
         # Run simulation steps
-        for step in range(self.total_steps):
+        step_iter = tqdm_auto(range(self.total_steps), total=self.total_steps, desc="Temporal steps", unit="step")
+        for step in step_iter:
             if step % 100 == 0:
                 logger.info(f"Step {step}/{self.total_steps}")
 
