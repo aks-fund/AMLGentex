@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import yaml
 import os
 import warnings
-from tqdm.auto import tqdm as tqdm_auto
 from src.utils.logging import get_logger, set_verbosity
 
 logger = get_logger(__name__)
@@ -288,18 +287,9 @@ class Optimizer():
         storage = 'sqlite:///' + os.path.join(self.bo_dir, 'data_tuning_study.db')
         study = optuna.create_study(storage=storage, sampler=optuna.samplers.TPESampler(multivariate=True), study_name='data_tuning_study', directions=['minimize', 'minimize'], load_if_exists=True, pruner=optuna.pruners.HyperbandPruner())
 
-        # Print trial results as they complete (always visible, even in non-verbose mode)
-        trial_count = [0]  # Use list to allow modification in nested function
-
-        def callback(study, trial):
-            trial_count[0] += 1
-            utility = trial.user_attrs.get('utility_metric', 0.0)
-            utility_loss = trial.user_attrs.get('utility_loss', 0.0)
-            tqdm_auto.write(
-                f"Trial {trial_count[0]}/{n_trials}: {self.utility_metric}={utility:.3f}, loss={utility_loss:.3f}"
-            )
-
-        study.optimize(self.objective, n_trials=n_trials, callbacks=[callback], show_progress_bar=True)
+        # Keep tuning progress in-place via Optuna's tqdm bar.
+        # Detailed per-trial values remain available in study artifacts/logs.
+        study.optimize(self.objective, n_trials=n_trials, show_progress_bar=True)
 
         # Clean up intermediate preprocessed files (final cleanup with message)
         self._cleanup_intermediate_files(verbose=True)

@@ -34,6 +34,14 @@ IS_SAR_KEY = "is_sar"  # SAR flag (account vertex attribute)
 DEFAULT_MARGIN_RATIO = 0.1  # Each member will keep this ratio of the received amount
 
 
+def _resolve_tqdm_ncols():
+    raw = os.environ.get("COLUMNS", "").strip()
+    if not raw.isdigit():
+        return None
+    ncols = int(raw)
+    return ncols if ncols >= 40 else None
+
+
 # Utility functions parsing values
 def parse_int(value):
     """ Convert string to int
@@ -510,18 +518,30 @@ class TransactionGenerator:
             header = next(reader)
 
             acct_id = 0
-            for row in reader:
-                if row[0].startswith("#"):
-                    continue
-                num = int(row[header.index('count')])
-                bank_id = row[header.index('bank_id')]
-                if bank_id is None:
-                    bank_id = self.default_bank_id
+            total_accounts = self.num_accounts if self.num_accounts > 0 else None
+            bar_ncols = _resolve_tqdm_ncols()
+            with tqdm_auto(
+                total=total_accounts,
+                desc="Load accounts",
+                unit="acct",
+                leave=True,
+                dynamic_ncols=bar_ncols is None,
+                ncols=bar_ncols,
+                smoothing=0,
+            ) as account_pbar:
+                for row in reader:
+                    if row[0].startswith("#"):
+                        continue
+                    num = int(row[header.index('count')])
+                    bank_id = row[header.index('bank_id')]
+                    if bank_id is None:
+                        bank_id = self.default_bank_id
 
-                # Generate accounts (balance will be set by demographics assignment)
-                for i in range(num):
-                    self.add_account(acct_id, init_balance=0.0, bank_id=bank_id, is_sar=False, normal_models=list())
-                    acct_id += 1
+                    # Generate accounts (balance will be set by demographics assignment)
+                    for i in range(num):
+                        self.add_account(acct_id, init_balance=0.0, bank_id=bank_id, is_sar=False, normal_models=list())
+                        acct_id += 1
+                    account_pbar.update(num)
 
         logger.info("Generated %d accounts." % self.num_accounts)
 
@@ -539,7 +559,18 @@ class TransactionGenerator:
 
         logger.info("Add %d base transactions" % self.g.number_of_edges())
         nodes = list(self.g.nodes())
-        for src_i, dst_i in self.g.edges():
+        bar_ncols = _resolve_tqdm_ncols()
+        edge_iter = tqdm_auto(
+            self.g.edges(),
+            total=self.g.number_of_edges(),
+            desc="Index base edges",
+            unit="edge",
+            leave=True,
+            dynamic_ncols=bar_ncols is None,
+            ncols=bar_ncols,
+            smoothing=0,
+        )
+        for src_i, dst_i in edge_iter:
             src = nodes[src_i]
             dst = nodes[dst_i]
             self.add_edge_info(src, dst)  # Add edge info.
@@ -666,7 +697,16 @@ class TransactionGenerator:
         """ Go through the accounts and attach normal models to them
         """        
         total_requested = sum(self.nominator.remaining_count_dict.values())
-        with tqdm_auto(total=total_requested, desc="Normal models", unit="model", leave=False) as normal_pbar:
+        bar_ncols = _resolve_tqdm_ncols()
+        with tqdm_auto(
+            total=total_requested,
+            desc="Normal models",
+            unit="model",
+            leave=True,
+            dynamic_ncols=bar_ncols is None,
+            ncols=bar_ncols,
+            smoothing=0,
+        ) as normal_pbar:
             while self.nominator.has_more():
                 for type in self.nominator.types():
                     count = self.nominator.count(type)
@@ -1047,10 +1087,19 @@ class TransactionGenerator:
             # Pre-load non-comment rows so we can compute an accurate total progress target.
             rows = [row for row in reader if len(row) > 0 and not row[0].startswith("#")]
             total_patterns = sum(int(row[idx_num]) for row in rows)
+            bar_ncols = _resolve_tqdm_ncols()
 
             # Generate transaction set
             count = 0
-            with tqdm_auto(total=total_patterns, desc="Alert patterns", unit="pattern", leave=False) as alert_pbar:
+            with tqdm_auto(
+                total=total_patterns,
+                desc="Alert patterns",
+                unit="pattern",
+                leave=True,
+                dynamic_ncols=bar_ncols is None,
+                ncols=bar_ncols,
+                smoothing=0,
+            ) as alert_pbar:
                 for row in rows:
                     num_patterns = int(row[idx_num])  # Number of alert patterns
                     typology_name = row[idx_type]
@@ -1571,12 +1620,16 @@ class TransactionGenerator:
             writer = csv.writer(wf)
             base_attrs = ["ACCOUNT_ID", "CUSTOMER_ID", "INIT_BALANCE", "SALARY", "AGE", "CITY", "IS_SAR", "BANK_ID"]
             writer.writerow(base_attrs + self.attr_names) # add user-defined attributes
+            bar_ncols = _resolve_tqdm_ncols()
             node_iter = tqdm_auto(
                 self.g.nodes(data=True),
                 total=self.g.number_of_nodes(),
                 desc="Write accounts",
                 unit="acct",
-                leave=False,
+                leave=True,
+                dynamic_ncols=bar_ncols is None,
+                ncols=bar_ncols,
+                smoothing=0,
             )
             for n in node_iter: # loop over all nodes with access to their attributes
                 aid = n[0]  # Account ID
@@ -1601,12 +1654,16 @@ class TransactionGenerator:
         with open(tx_file, "w") as wf:
             writer = csv.writer(wf)
             writer.writerow(["id", "src", "dst", "ttype"])
+            bar_ncols = _resolve_tqdm_ncols()
             edge_iter = tqdm_auto(
                 self.g.edges(data=True),
                 total=self.g.number_of_edges(),
                 desc="Write transactions",
                 unit="edge",
-                leave=False,
+                leave=True,
+                dynamic_ncols=bar_ncols is None,
+                ncols=bar_ncols,
+                smoothing=0,
             )
             for e in edge_iter: # go through all transactions in graph
                 src = e[0]
@@ -1637,20 +1694,33 @@ class TransactionGenerator:
             # Removed: isSAR (redundant - determined by file), bankID (can be looked up from account)
             base_attrs = ["modelID", "type", "accountID", "isMain", "sourceType", "phase"]
             writer.writerow(base_attrs + self.attr_names)
-            for gid, sub_g in self.alert_groups.items(): # go over all subgraphs of alert groups
-                main_id = sub_g.graph[MAIN_ACCT_KEY] # get main account ID
-                pattern_type = sub_g.graph["reason"] # get the type of money laundering
-                source_type = sub_g.graph["source_type"] # source type
-                for n in sub_g.nodes(): # go over all nodes in the subgraph
-                    is_main = "true" if n == main_id else "false"
-                    # Get phase from node attributes (default to 0 if not set)
-                    phase = sub_g.nodes[n].get("phase", 0)
-                    values = [gid, pattern_type, n, is_main, source_type, phase]
-                    prop = self.g.nodes[n] # get the current node from the main graph
-                    for attr_name in self.attr_names: # read out all the user-defined attributes
-                        values.append(prop[attr_name]) # append the values to the list
-                    writer.writerow(values) # write the values to the CSV file
-                    acct_count += 1
+            total_members = sum(sub_g.number_of_nodes() for sub_g in self.alert_groups.values())
+            bar_ncols = _resolve_tqdm_ncols()
+            with tqdm_auto(
+                total=total_members,
+                desc="Write alert models",
+                unit="member",
+                leave=True,
+                dynamic_ncols=bar_ncols is None,
+                ncols=bar_ncols,
+                smoothing=0,
+                disable=(total_members == 0),
+            ) as alert_writer_pbar:
+                for gid, sub_g in self.alert_groups.items(): # go over all subgraphs of alert groups
+                    main_id = sub_g.graph[MAIN_ACCT_KEY] # get main account ID
+                    pattern_type = sub_g.graph["reason"] # get the type of money laundering
+                    source_type = sub_g.graph["source_type"] # source type
+                    for n in sub_g.nodes(): # go over all nodes in the subgraph
+                        is_main = "true" if n == main_id else "false"
+                        # Get phase from node attributes (default to 0 if not set)
+                        phase = sub_g.nodes[n].get("phase", 0)
+                        values = [gid, pattern_type, n, is_main, source_type, phase]
+                        prop = self.g.nodes[n] # get the current node from the main graph
+                        for attr_name in self.attr_names: # read out all the user-defined attributes
+                            values.append(prop[attr_name]) # append the values to the list
+                        writer.writerow(values) # write the values to the CSV file
+                        acct_count += 1
+                        alert_writer_pbar.update(1)
 
         logger.info("Exported %d members for %d AML typologies to %s" %
                     (acct_count, len(self.alert_groups), alert_model_file))
@@ -1667,11 +1737,24 @@ class TransactionGenerator:
             column_headers = ["modelID", "type", "accountID", "isMain"]
             writer.writerow(column_headers)
 
-            for normal_model in self.normal_models: # go over the normal models
-                for account_id in normal_model.node_ids: # go over the accounts in the normal model
-                    is_main = normal_model.is_main(account_id)
-                    values = [normal_model.id, normal_model.type, account_id, is_main]
-                    writer.writerow(values)
+            total_members = sum(len(normal_model.node_ids) for normal_model in self.normal_models)
+            bar_ncols = _resolve_tqdm_ncols()
+            with tqdm_auto(
+                total=total_members,
+                desc="Write normal models",
+                unit="member",
+                leave=True,
+                dynamic_ncols=bar_ncols is None,
+                ncols=bar_ncols,
+                smoothing=0,
+                disable=(total_members == 0),
+            ) as normal_writer_pbar:
+                for normal_model in self.normal_models: # go over the normal models
+                    for account_id in normal_model.node_ids: # go over the accounts in the normal model
+                        is_main = normal_model.is_main(account_id)
+                        values = [normal_model.id, normal_model.type, account_id, is_main]
+                        writer.writerow(values)
+                        normal_writer_pbar.update(1)
 
     def count__patterns(self, threshold=2):
         """Count the number of fan-in and fan-out patterns in the generated transaction graph
@@ -1727,11 +1810,10 @@ def generate_transaction_graph_from_config(conf, sim_name=None):
         ("Write alert model list", txg.write_alert_account_list),
         ("Write normal model list", txg.write_normal_models),
     ]
-    with tqdm_auto(total=len(stages), desc="Spatial stages", unit="stage") as stage_bar:
-        for stage_name, stage_fn in stages:
-            stage_bar.set_postfix_str(stage_name)
-            stage_fn()
-            stage_bar.update(1)
+    total_stages = len(stages)
+    for stage_index, (stage_name, stage_fn) in enumerate(stages, start=1):
+        tqdm_auto.write(f"[{stage_index}/{total_stages}] Stage: {stage_name}")
+        stage_fn()
 
 def generate_transaction_graph(conf_file, verbose=None):
     """Generate transaction graph from config file path (for CLI usage).

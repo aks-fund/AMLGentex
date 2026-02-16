@@ -20,6 +20,14 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _resolve_tqdm_ncols() -> int | None:
+    raw = os.environ.get("COLUMNS", "").strip()
+    if not raw.isdigit():
+        return None
+    ncols = int(raw)
+    return ncols if ncols >= 40 else None
+
+
 class AMLSimulator:
     """Main simulator for anti-money laundering transaction generation"""
 
@@ -585,12 +593,35 @@ class AMLSimulator:
             })
 
         # Run simulation steps
-        step_iter = tqdm_auto(range(self.total_steps), total=self.total_steps, desc="Temporal steps", unit="step")
-        for step in step_iter:
+        # Progress is measured in weighted "work units" for more stable ETA:
+        # - each account processed once per step
+        # - each normal model scanned once per step
+        # - alert patterns scanned twice per step (fund injection + execution)
+        n_accounts = len(self.accounts)
+        n_normal_models = len(self.normal_model_objects)
+        n_alert_patterns = len(self.alert_patterns)
+        per_step_units = n_accounts + n_normal_models + (2 * n_alert_patterns)
+        total_units = self.total_steps * per_step_units
+        account_update_chunk = max(1, n_accounts // 200) if n_accounts > 0 else 1
+        bar_ncols = _resolve_tqdm_ncols()
+
+        work_iter = tqdm_auto(
+            total=total_units,
+            desc="Temporal work",
+            unit="unit",
+            leave=True,
+            dynamic_ncols=bar_ncols is None,
+            ncols=bar_ncols,
+            smoothing=0,
+            disable=(total_units == 0),
+        )
+
+        for step in range(self.total_steps):
             if step % 100 == 0:
                 logger.info(f"Step {step}/{self.total_steps}")
 
             # Handle account behaviors (income/outcome)
+            processed_accounts = 0
             for account in self.accounts.values():
                 txs = account.handle_step(step, all_transactions, available_banks)
                 for tx in txs:
@@ -618,6 +649,11 @@ class AMLSimulator:
                         'patternID': tx['patternID'],
                         'modelType': tx['modelType']
                     })
+                processed_accounts += 1
+                if processed_accounts % account_update_chunk == 0:
+                    work_iter.update(account_update_chunk)
+            if n_accounts > 0 and processed_accounts % account_update_chunk != 0:
+                work_iter.update(processed_accounts % account_update_chunk)
 
             # Execute normal transaction patterns
             pattern_txs = self.execute_normal_transactions(step)
@@ -645,6 +681,8 @@ class AMLSimulator:
                     'patternID': tx['patternID'],
                     'modelType': tx['modelType']
                 })
+            if n_normal_models > 0:
+                work_iter.update(n_normal_models)
 
             # Inject illicit funds for alert patterns at their start step
             for pattern in self.alert_patterns:
@@ -677,6 +715,12 @@ class AMLSimulator:
                     'patternID': tx['patternID'],
                     'modelType': tx['modelType']
                 })
+            if n_alert_patterns > 0:
+                work_iter.update(2 * n_alert_patterns)
+
+            work_iter.set_postfix_str(f"step={step + 1}/{self.total_steps}")
+
+        work_iter.close()
 
         logger.info("=" * 60)
         logger.info(f"Simulation complete! Generated {len(all_transactions)} transactions")
