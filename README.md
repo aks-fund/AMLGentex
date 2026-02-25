@@ -245,8 +245,8 @@ Before alert pattern injection, AMLGentex assigns realistic demographic attribut
 
 **Assigned Attributes:**
 - **Age** (years): Population-sampled from demographics CSV (16-100 years)
-- **Salary** (monthly SEK): Log-normal distribution per age group
-- **Balance** (SEK): Derived from salary + structural position + noise
+- **Salary** (monthly, profile currency): Log-normal distribution per age group
+- **Balance** (profile currency): Derived from salary + structural position + noise
   - Formula: `log(balance) = α_salary·log(salary) + α_struct·z(struct) + noise`
   - Calibrated to median: `balance_months × population_median_salary`
 - **City** (categorical): BFS propagation from high-degree hub seeds

@@ -14,7 +14,9 @@ class Optimizer():
     def __init__(self, data_conf_file, config, generator, preprocessor, target:float,
                  constraint_type:str, constraint_value:float, utility_metric:str,
                  model:str='DecisionTreeClassifier', bank=None, bo_dir:str='tmp',
-                 seed:int=0, num_trials_model:int=1):
+                 seed:int=0, num_trials_model:int=1,
+                 optimization_mode:str='operational', target_fpr:float=0.98,
+                 fpr_threshold:float=0.5):
         """
         Data tuning optimizer.
 
@@ -32,6 +34,11 @@ class Optimizer():
             bo_dir: Directory for Bayesian optimization results
             seed: Random seed
             num_trials_model: Number of hyperparameter optimization trials per data trial
+            optimization_mode: Outer-loop objective mode:
+                - 'operational': optimize constrained utility target + feature-importance loss
+                - 'knowledge_free': optimize |FPR - target_fpr| + feature-importance loss
+            target_fpr: FPR target used in 'knowledge_free' mode (paper uses ~0.98)
+            fpr_threshold: Probability threshold used when computing FPR on test set
 
         Examples:
             # Precision@K: Optimize data to achieve 80% precision in top 100 alerts
@@ -56,6 +63,22 @@ class Optimizer():
         self.bo_dir = bo_dir
         self.seed = seed
         self.num_trials_model = num_trials_model
+        self.optimization_mode = optimization_mode
+        self.target_fpr = target_fpr
+        self.fpr_threshold = fpr_threshold
+
+        if self.optimization_mode not in {'operational', 'knowledge_free'}:
+            raise ValueError(
+                f"Unknown optimization_mode: {self.optimization_mode}. "
+                "Use 'operational' or 'knowledge_free'."
+            )
+
+        if self.optimization_mode == 'knowledge_free' and self.model != 'DecisionTreeClassifier':
+            logger.warning(
+                "knowledge_free mode is paper-calibrated for DecisionTreeClassifier. "
+                f"Overriding model '{self.model}' -> 'DecisionTreeClassifier'."
+            )
+            self.model = 'DecisionTreeClassifier'
 
         # Configure quiet mode for optimization trials
         warnings.filterwarnings('ignore')
@@ -145,7 +168,6 @@ class Optimizer():
         bounds = self._collect_bounds(data_config['optimisation_bounds'])
 
         # Update data generation parameters from optimization bounds
-        updated_params = {}
         for key_path, section, path, lower, upper in bounds:
             if type(lower) is int:
                 value = trial.suggest_int(key_path, lower, upper)
@@ -155,7 +177,6 @@ class Optimizer():
                 raise ValueError(f'Type {type(lower)} in optimisation bounds not recognised, use int or float.')
 
             self._set_nested_value(data_config, section, path, value)
-            updated_params[key_path] = value
 
         # Keep random seed fixed across trials for fair parameter comparison
         data_config['general']['random_seed'] = self.seed
@@ -209,16 +230,20 @@ class Optimizer():
         df_edges = datasets['testset_edges']
         df_edges[(df_edges['src'].isin(unique_nodes)) & (df_edges['dst'].isin(unique_nodes))].to_parquet(os.path.join(self.config['preprocess']['preprocessed_data_dir'], 'testset_edges.parquet'), index=False)
 
-        # Update config with preprocessed data paths and utility metric parameters
+        # Update config with preprocessed data paths and objective-specific parameters
         params = self.config[self.model]['default'].copy()
         params['trainset'] = os.path.join(self.config['preprocess']['preprocessed_data_dir'], 'trainset_nodes.parquet')
         params['valset'] = os.path.join(self.config['preprocess']['preprocessed_data_dir'], 'valset_nodes.parquet')
         params['testset'] = os.path.join(self.config['preprocess']['preprocessed_data_dir'], 'testset_nodes.parquet')
-        params['save_utility_metric'] = True
-        params['constraint_type'] = self.constraint_type
-        params['constraint_value'] = self.constraint_value
-        params['utility_metric'] = self.utility_metric
         params['save_feature_importances_error'] = True
+        if self.optimization_mode == 'operational':
+            params['save_utility_metric'] = True
+            params['constraint_type'] = self.constraint_type
+            params['constraint_value'] = self.constraint_value
+            params['utility_metric'] = self.utility_metric
+        else:
+            params['save_fpr'] = True
+            params['fpr_threshold'] = self.fpr_threshold
 
         # Run hyperparameter tuning on the selected bank (use same seed for fair comparison)
         storage = None
@@ -235,19 +260,27 @@ class Optimizer():
             storage = storage,
             verbose = False  # Suppress progress bar during data tuning
         )
-        best_trials = hyperparamtuner.optimize(n_trials=self.num_trials_model)
+        hyperparamtuner.optimize(n_trials=self.num_trials_model)
 
-        # Extract utility metric and calculate loss
-        avg_utility = hyperparamtuner.utility_metric
-        utility_loss = abs(avg_utility - self.target)
+        if self.optimization_mode == 'operational':
+            objective_value = hyperparamtuner.utility_metric
+            objective_loss = abs(objective_value - self.target)
+            trial.set_user_attr('utility_metric', objective_value)
+            trial.set_user_attr('utility_loss', objective_loss)
+        else:
+            objective_value = hyperparamtuner.fpr
+            objective_loss = abs(objective_value - self.target_fpr)
+            trial.set_user_attr('fpr', objective_value)
+            trial.set_user_attr('fpr_loss', objective_loss)
 
         avg_feature_importances_error = hyperparamtuner.feature_importances_error
 
-        # Store results in trial for callback access
-        trial.set_user_attr('utility_metric', avg_utility)
-        trial.set_user_attr('utility_loss', utility_loss)
+        # Store objective aliases for consistent downstream inspection.
+        trial.set_user_attr('objective_1_value', objective_value)
+        trial.set_user_attr('objective_1_loss', objective_loss)
+        trial.set_user_attr('objective_2_value', avg_feature_importances_error)
 
-        return utility_loss, avg_feature_importances_error
+        return objective_loss, avg_feature_importances_error
     
     def _cleanup_intermediate_files(self, verbose=False):
         """Remove intermediate preprocessed files created during optimization."""
@@ -280,6 +313,13 @@ class Optimizer():
         # Store all BO results in bo_dir (e.g., experiments/{name}/data_tuning/)
         os.makedirs(self.bo_dir, exist_ok=True)
 
+        with open(self.data_conf_file, 'r') as f:
+            data_config = yaml.safe_load(f)
+        bounds = self._collect_bounds(data_config['optimisation_bounds'])
+        logger.info(f'Optimizing {len(bounds)} parameters from optimisation_bounds.')
+        for key_path, *_ in bounds:
+            logger.info(f'  - {key_path}')
+
         # Generate baseline once (normal accounts + demographics, before alert injection)
         print("Generating baseline graph (Phase 1)...")
         self.generator.run_spatial_baseline()
@@ -295,18 +335,23 @@ class Optimizer():
         self._cleanup_intermediate_files(verbose=True)
 
         # Save pareto front plot
-        # Format constraint string for plot
-        if self.constraint_type == 'K':
-            constraint_str = f"K={int(self.constraint_value)}"
-        elif self.constraint_type == 'fpr':
-            constraint_str = f"FPR≤{self.constraint_value}"
-        elif self.constraint_type == 'recall':
-            constraint_str = f"Recall≥{self.constraint_value}"
+        if self.optimization_mode == 'operational':
+            if self.constraint_type == 'K':
+                constraint_str = f"K={int(self.constraint_value)}"
+            elif self.constraint_type == 'fpr':
+                constraint_str = f"FPR<={self.constraint_value}"
+            elif self.constraint_type == 'recall':
+                constraint_str = f"Recall>={self.constraint_value}"
+            else:
+                constraint_str = self.constraint_type
+            target_names = ['utility_loss', 'importance_loss']
+            x_label = f'{self.utility_metric.capitalize()} Loss (|{self.utility_metric} - {self.target}|) at {constraint_str}'
         else:
-            constraint_str = self.constraint_type
+            target_names = ['fpr_loss', 'importance_loss']
+            x_label = f'FPR Loss (|FPR - {self.target_fpr}|) at threshold={self.fpr_threshold}'
 
-        ax = optuna.visualization.matplotlib.plot_pareto_front(study, target_names=['utility_loss', 'importance_loss'])
-        ax.set_xlabel(f'{self.utility_metric.capitalize()} Loss (|{self.utility_metric} - {self.target}|) at {constraint_str}', fontsize=12)
+        ax = optuna.visualization.matplotlib.plot_pareto_front(study, target_names=target_names)
+        ax.set_xlabel(x_label, fontsize=12)
         ax.set_ylabel('Feature Importance Variance', fontsize=12)
         ax.set_title('Data Tuning: Pareto Front', fontsize=14)
         fig_path = os.path.join(self.bo_dir, 'pareto_front.png')
@@ -327,6 +372,12 @@ class Optimizer():
         logger.info(f'  - Database: data_tuning_study.db')
         logger.info(f'  - Pareto front: pareto_front.png')
         logger.info(f'  - Best trials: best_trials.txt')
+
+        storage_obj = getattr(study, '_storage', None)
+        if storage_obj is not None and hasattr(storage_obj, 'remove_session'):
+            storage_obj.remove_session()
+        if storage_obj is not None and hasattr(storage_obj, 'engine'):
+            storage_obj.engine.dispose()
 
         return study.best_trials
 
@@ -382,15 +433,24 @@ class Optimizer():
         logger.info(f'\n{"="*60}')
         logger.info(f'Updated {self.data_conf_file}')
         logger.info(f'Using trial {trial_number}:')
-        logger.info(f'  {self.utility_metric.capitalize()} loss: {trial.values[0]:.4f}')
+        if self.optimization_mode == 'operational':
+            logger.info(f'  {self.utility_metric.capitalize()} loss: {trial.values[0]:.4f}')
+        else:
+            logger.info(f'  FPR loss (target={self.target_fpr:.4f}): {trial.values[0]:.4f}')
         logger.info(f'  Feature importance loss: {trial.values[1]:.4f}')
         logger.info(f'\nParameter changes:')
         for param, new_value in trial.params.items():
             old_value = old_values.get(param)
             old_str = f'{old_value:.4f}' if isinstance(old_value, float) else str(old_value) if old_value is not None else 'N/A'
             new_str = f'{new_value:.4f}' if isinstance(new_value, float) else str(new_value)
-            logger.info(f'  {param}: {old_str} → {new_str}')
+            logger.info(f'  {param}: {old_str} -> {new_str}')
         logger.info(f'{"="*60}\n')
+
+        storage_obj = getattr(study, '_storage', None)
+        if storage_obj is not None and hasattr(storage_obj, 'remove_session'):
+            storage_obj.remove_session()
+        if storage_obj is not None and hasattr(storage_obj, 'engine'):
+            storage_obj.engine.dispose()
     
 
 

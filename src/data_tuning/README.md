@@ -9,10 +9,28 @@ Data tuning uses **nested Bayesian optimization** to find optimal parameters for
 **What it optimizes**: Parameters in `data.yaml` under `optimisation_bounds` (SAR amounts, spending patterns, behavioral features, alert overlap).
 
 **How it optimizes**: Multi-objective optimization balancing:
-1. Utility metric loss: `|achieved_metric - target|`
+1. Objective loss:
+   - `knowledge_free` mode (paper-aligned): `|FPR - target_fpr|`
+   - `operational` mode: `|achieved_metric - target|`
 2. Feature importance variance: Lower variance = more stable features
 
 Results in a **Pareto front** of optimal trade-offs.
+
+## Paper-Aligned Mode (Recommended for Realism)
+
+The default CLI mode (`--optimization_mode knowledge_free`) follows the paper:
+- Decision tree proxy model
+- Target high FPR (default `--target_fpr 0.98`)
+- Feature-importance regularization for harder, less single-feature-dominated benchmarks
+
+```bash
+uv run python scripts/tune_data.py \
+  --experiment_dir experiments/my_exp \
+  --optimization_mode knowledge_free \
+  --target_fpr 0.98 \
+  --num_trials_data 20 \
+  --num_trials_model 15
+```
 
 ## Three Optimization Objectives
 
@@ -129,6 +147,9 @@ uv run python scripts/tune_data.py \
 ```
 
 **Key Arguments**:
+- `--optimization_mode`: `knowledge_free` (paper FPR target) or `operational` (constraint utility)
+- `--model`: Evaluation model (knowledge_free enforces `DecisionTreeClassifier`)
+- `--target_fpr`: FPR target for `knowledge_free` mode
 - `--constraint_type`: K, fpr, or recall
 - `--constraint_value`: Numeric constraint value
 - `--utility_metric`: precision or recall
@@ -188,7 +209,9 @@ class DataTuner:
         bo_dir: str = 'tmp',
         seed: int = 0,
         num_trials_model: int = 1,
-        verbose: bool = False
+        optimization_mode: str = 'operational',  # 'knowledge_free' or 'operational'
+        target_fpr: float = 0.98,
+        fpr_threshold: float = 0.5
     )
 
     def __call__(self, n_trials: int) -> List[optuna.Trial]:
@@ -213,7 +236,9 @@ class Optimizer:
         bo_dir: str = 'tmp',
         seed: int = 0,
         num_trials_model: int = 1,
-        verbose: bool = False
+        optimization_mode: str = 'operational',
+        target_fpr: float = 0.98,
+        fpr_threshold: float = 0.5
     )
 
     def optimize(self, n_trials: int = 10) -> List[optuna.Trial]:

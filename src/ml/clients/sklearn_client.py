@@ -69,17 +69,34 @@ class SklearnClient():
         self.log(dataset='valset', round=0, loss=loss, y_pred=y_pred, y_true=y_true, metrics=['accuracy', 'average_precision', 'balanced_accuracy', 'f1', 'precision', 'recall', 'precision_recall_curve', 'roc_curve'])
 
         # Save constrained utility metric on testset for data tuning
-        if kwargs.get('save_utility_metric', False) is True:
+        save_utility_metric = kwargs.get('save_utility_metric', False) is True
+        save_fpr = kwargs.get('save_fpr', False) is True
+        y_pred_proba = None
+        if save_utility_metric or save_fpr:
+            y_pred_proba = self.model.predict_proba(self.X_test)[:,1]
+
+        if save_utility_metric:
             constraint_type = kwargs.get('constraint_type', 'K')
             constraint_value = kwargs.get('constraint_value', 100)
             utility_metric = kwargs.get('utility_metric', 'precision')
 
-            y_pred_proba = self.model.predict_proba(self.X_test)[:,1]
             utility_value = constrained_utility_metric(
                 self.y_test, y_pred_proba,
                 constraint_type, constraint_value, utility_metric
             )
             self.results['utility_metric'] = utility_value
+
+        if save_fpr:
+            threshold = kwargs.get('fpr_threshold', 0.5)
+            y_pred_binary = (y_pred_proba >= threshold)
+            negatives = (self.y_test == 0)
+            n_negatives = negatives.sum()
+            if n_negatives == 0:
+                fpr_value = 0.0
+            else:
+                false_positives = (y_pred_binary & negatives).sum()
+                fpr_value = false_positives / n_negatives
+            self.results['fpr'] = float(fpr_value)
 
         loss, y_pred, y_true = self.evaluate(dataset='testset')
         self.log(dataset='testset', round=0, loss=loss, y_pred=y_pred, y_true=y_true, metrics=['accuracy', 'average_precision', 'balanced_accuracy', 'f1', 'precision', 'recall', 'precision_recall_curve', 'roc_curve'])

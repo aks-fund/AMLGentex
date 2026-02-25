@@ -15,8 +15,12 @@ Demographics CSV Schema
 -----------------------
 Required columns:
     - population size: Number of people in this age group (used for sampling weights)
-    - average year income (tkr): Mean yearly income in thousands of SEK
-    - median year income (tkr): Median yearly income in thousands of SEK
+    - average year income (tkr): Mean yearly income in thousands of local currency
+    - median year income (tkr): Median yearly income in thousands of local currency
+
+Accepted aliases for explicit hryvnia datasets:
+    - average year income (kUAH)
+    - median year income (kUAH)
 
 Age format (one of):
     Option 1 - Single-year ages:
@@ -53,7 +57,7 @@ class DemographicsAssigner:
     """
     Assigns demographically-realistic KYC attributes to graph nodes.
 
-    Uses Swedish Central Bureau of Statistics (SCB) data to:
+    Uses country-specific demographic data to:
     - Sample age from population distribution
     - Sample salary conditional on age (log-normal)
     - Derive balance from salary + structural position + noise
@@ -65,7 +69,8 @@ class DemographicsAssigner:
         demographics_csv: str,
         seed: int = 0,
         balance_params: Dict = None,
-        city_params: Dict = None
+        city_params: Dict = None,
+        currency: str = "SEK",
     ):
         """
         Initialize the demographics assigner.
@@ -83,9 +88,11 @@ class DemographicsAssigner:
             city_params: Parameters for city assignment:
                 - n_cities: Number of distinct cities (default: 10)
                 - city_names: Optional list of city names (default: city_0, city_1, ...)
+            currency: Currency code used for logs and reporting (e.g., UAH, SEK, EUR)
         """
         self.g = graph
         self.rng = np.random.default_rng(seed)
+        self.currency = currency
 
         # Load demographics data
         if not demographics_csv:
@@ -131,7 +138,34 @@ class DemographicsAssigner:
                 "See module docstring for schema details."
             )
 
-        # Validate required columns
+        # Resolve compatible income column names to canonical internal names.
+        avg_income_aliases = [
+            'average year income (tkr)',
+            'average year income (kUAH)',
+            'average year income (thousand UAH)',
+        ]
+        median_income_aliases = [
+            'median year income (tkr)',
+            'median year income (kUAH)',
+            'median year income (thousand UAH)',
+        ]
+        avg_income_col = next((c for c in avg_income_aliases if c in df.columns), None)
+        median_income_col = next((c for c in median_income_aliases if c in df.columns), None)
+        if avg_income_col is None or median_income_col is None:
+            raise ValueError(
+                "Demographics CSV must contain income columns. Supported names: "
+                f"{avg_income_aliases} and {median_income_aliases}"
+            )
+
+        if avg_income_col != 'average year income (tkr)' or median_income_col != 'median year income (tkr)':
+            df = df.rename(
+                columns={
+                    avg_income_col: 'average year income (tkr)',
+                    median_income_col: 'median year income (tkr)',
+                }
+            )
+
+        # Validate required columns.
         required = ['population size', 'average year income (tkr)', 'median year income (tkr)']
         missing = [c for c in required if c not in df.columns]
         if missing:
@@ -166,11 +200,11 @@ class DemographicsAssigner:
         if median_yearly_tkr is None or median_yearly_tkr <= 0:
             median_yearly_tkr = df['median year income (tkr)'].median()
 
-        # Convert: yearly (tkr) -> monthly (SEK)
-        median_monthly_sek = median_yearly_tkr * 1000 / 12
+        # Convert: yearly (thousands of currency) -> monthly (currency)
+        median_monthly = median_yearly_tkr * 1000 / 12
 
-        logger.info(f"Population median monthly salary: {median_monthly_sek:.0f} SEK")
-        return median_monthly_sek
+        logger.info(f"Population median monthly salary: {median_monthly:.0f} {self.currency}")
+        return median_monthly
 
     def assign(self, structural_scores: Dict = None):
         """
@@ -243,7 +277,7 @@ class DemographicsAssigner:
         Sample age from population distribution, then salary conditional on age.
 
         Returns:
-            (age, monthly_salary_sek)
+            (age, monthly_salary)
         """
         # Sample age band based on population weights
         rand_val = self.rng.random()
@@ -277,10 +311,10 @@ class DemographicsAssigner:
 
         yearly_salary_tkr = self.rng.lognormal(mu, sigma)
 
-        # Convert: yearly (tkr) -> monthly (SEK)
-        monthly_salary_sek = yearly_salary_tkr * 1000 / 12
+        # Convert: yearly (thousands of currency) -> monthly (currency)
+        monthly_salary = yearly_salary_tkr * 1000 / 12
 
-        return age, monthly_salary_sek
+        return age, monthly_salary
 
     def _compute_balances(self, salaries: list, struct_zscores: list) -> list:
         """
@@ -411,7 +445,7 @@ class DemographicsAssigner:
         logger.info(f"Age: mean={ages.mean():.1f}, std={ages.std():.1f}, "
                    f"range=[{ages.min()}, {ages.max()}]")
 
-        logger.info(f"Salary (monthly SEK): mean={salaries.mean():.0f}, "
+        logger.info(f"Salary (monthly {self.currency}): mean={salaries.mean():.0f}, "
                    f"median={np.median(salaries):.0f}, std={salaries.std():.0f}")
 
         logger.info(f"Balance: mean={balances.mean():.0f}, "
@@ -444,7 +478,8 @@ def assign_kyc_from_demographics(
     seed: int = 0,
     balance_params: Dict = None,
     city_params: Dict = None,
-    structural_scores: Dict = None
+    structural_scores: Dict = None,
+    currency: str = "SEK",
 ):
     """
     Convenience function to assign demographics-based KYC to a graph.
@@ -461,12 +496,14 @@ def assign_kyc_from_demographics(
         structural_scores: Pre-computed structural z-scores {node: z_score}.
             If None, uses log-degree z-scores. For AML scenarios, consider passing
             a mixed score (e.g., 0.4*degree_z + 0.3*pagerank_z + 0.3*betweenness_z).
+        currency: Currency code used for logs and reporting.
     """
     assigner = DemographicsAssigner(
         graph=graph,
         demographics_csv=demographics_csv,
         seed=seed,
         balance_params=balance_params,
-        city_params=city_params
+        city_params=city_params,
+        currency=currency,
     )
     assigner.assign(structural_scores=structural_scores)

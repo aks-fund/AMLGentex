@@ -81,6 +81,23 @@ class TestOptimizerInit:
         assert optimizer.seed == 123
         assert optimizer.num_trials_model == 10
 
+    def test_init_knowledge_free_enforces_decision_tree(self):
+        """Knowledge-free mode should enforce DecisionTreeClassifier (paper setup)."""
+        optimizer = Optimizer(
+            data_conf_file='/path/to/config.yaml',
+            config={'preprocess': {'preprocessed_data_dir': '/tmp'}},
+            generator=Mock(),
+            preprocessor=Mock(),
+            target=0.01,
+            constraint_type='fpr', constraint_value=0.01, utility_metric='recall',
+            model='RandomForestClassifier',
+            seed=42,
+            optimization_mode='knowledge_free'
+        )
+
+        assert optimizer.model == 'DecisionTreeClassifier'
+        assert optimizer.optimization_mode == 'knowledge_free'
+
 
 @pytest.mark.unit
 class TestOptimizerObjective:
@@ -356,6 +373,78 @@ class TestOptimizerObjective:
 
             # Verify preprocessor was called with tx_log_path
             mock_preprocessor.assert_called_once_with(tx_log_path)
+
+    def test_objective_knowledge_free_uses_fpr_target(self):
+        """Knowledge-free mode objective should use |FPR - target_fpr|."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / 'config.yaml'
+            data_config = {
+                'default': {},
+                'optimisation_bounds': {},
+                'general': {}
+            }
+            with open(config_path, 'w') as f:
+                yaml.dump(data_config, f)
+
+            mock_generator = Mock()
+            mock_generator.run_spatial_from_baseline = Mock()
+            mock_generator.run_temporal = Mock(return_value='/tmp/tx_log.parquet')
+            mock_preprocessor = Mock(return_value={
+                'trainset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
+                'trainset_edges': pd.DataFrame(columns=['src', 'dst']),
+                'valset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
+                'valset_edges': pd.DataFrame(columns=['src', 'dst']),
+                'testset_nodes': pd.DataFrame({'account': [1], 'bank': ['BANK001'], 'is_sar': [0]}),
+                'testset_edges': pd.DataFrame(columns=['src', 'dst'])
+            })
+
+            config = {
+                'preprocess': {'preprocessed_data_dir': tmpdir},
+                'DecisionTreeClassifier': {
+                    'default': {'client_type': 'TabularClient'},
+                    'search_space': {},
+                    'isolated': {'clients': {'BANK001': {}}}
+                }
+            }
+
+            optimizer = Optimizer(
+                data_conf_file=str(config_path),
+                config=config,
+                generator=mock_generator,
+                preprocessor=mock_preprocessor,
+                target=0.8,
+                constraint_type='K', constraint_value=100, utility_metric='precision',
+                seed=42,
+                optimization_mode='knowledge_free',
+                target_fpr=0.98
+            )
+
+            mock_trial = Mock()
+            mock_trial.set_user_attr = Mock()
+
+            with patch('src.data_tuning.optimizer.HyperparamTuner') as mock_tuner_class, \
+                 patch('src.data_tuning.optimizer.clients') as mock_clients, \
+                 patch('src.data_tuning.optimizer.models') as mock_models:
+                mock_tuner_instance = Mock()
+                mock_tuner_instance.optimize = Mock(return_value=[])
+                mock_tuner_instance.fpr = 0.92
+                mock_tuner_instance.feature_importances_error = 0.11
+                mock_tuner_class.return_value = mock_tuner_instance
+
+                mock_clients.TabularClient = Mock()
+                mock_models.DecisionTreeClassifier = Mock()
+
+                result = optimizer.objective(mock_trial)
+
+            assert result[0] == pytest.approx(0.06)
+            assert result[1] == pytest.approx(0.11)
+            mock_trial.set_user_attr.assert_any_call('fpr', 0.92)
+            fpr_loss_calls = [
+                c for c in mock_trial.set_user_attr.call_args_list
+                if c.args and c.args[0] == 'fpr_loss'
+            ]
+            assert len(fpr_loss_calls) == 1
+            assert fpr_loss_calls[0].args[1] == pytest.approx(0.06)
 
 
 @pytest.mark.unit

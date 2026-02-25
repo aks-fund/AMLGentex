@@ -105,7 +105,10 @@ class TestDataTunerCall:
                 model='DecisionTreeClassifier',
                 bo_dir='/tmp',
                 seed=42,
-                num_trials_model=10
+                num_trials_model=10,
+                optimization_mode='operational',
+                target_fpr=0.98,
+                fpr_threshold=0.5
             )
 
     def test_call_runs_optimization(self):

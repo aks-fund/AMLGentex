@@ -7,7 +7,9 @@ logger = get_logger(__name__)
 class DataTuner:
     def __init__(self, data_conf_file, config, generator, preprocessor, target,
                  constraint_type, constraint_value, utility_metric,
-                 model, bo_dir, seed, num_trials_model):
+                 model, bo_dir, seed, num_trials_model,
+                 optimization_mode='operational', target_fpr=0.98,
+                 fpr_threshold=0.5):
         """
         Data tuning wrapper.
 
@@ -24,6 +26,9 @@ class DataTuner:
             bo_dir: Directory for Bayesian optimization results
             seed: Random seed
             num_trials_model: Number of hyperparameter optimization trials per data trial
+            optimization_mode: 'operational' or 'knowledge_free'
+            target_fpr: FPR target for knowledge_free mode
+            fpr_threshold: Probability threshold used for FPR calculation
 
         Examples:
             # Precision@K: Optimize data to achieve 80% precision in top 100 alerts
@@ -47,6 +52,9 @@ class DataTuner:
         self.bo_dir = bo_dir
         self.seed = seed
         self.num_trials_model = num_trials_model
+        self.optimization_mode = optimization_mode
+        self.target_fpr = target_fpr
+        self.fpr_threshold = fpr_threshold
 
     def __call__(self, n_trials):
 
@@ -62,7 +70,10 @@ class DataTuner:
             model=self.model,
             bo_dir=self.bo_dir,
             seed=self.seed,
-            num_trials_model=self.num_trials_model
+            num_trials_model=self.num_trials_model,
+            optimization_mode=self.optimization_mode,
+            target_fpr=self.target_fpr,
+            fpr_threshold=self.fpr_threshold
         )
         best_trials = self.optimizer.optimize(n_trials=n_trials)
 

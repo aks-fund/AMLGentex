@@ -910,12 +910,14 @@ class TransactionGenerator:
         logger.info(f"Assigning demographics-based KYC from {csv_path}...")
 
         balance_params = demographics_config.get('balance_params', None)
+        currency = demographics_config.get('currency', 'SEK')
 
         assign_kyc_from_demographics(
             graph=self.g,
             demographics_csv=csv_path,
             seed=self.seed,
-            balance_params=balance_params
+            balance_params=balance_params,
+            currency=currency,
         )
 
         logger.info("Demographics assignment complete")

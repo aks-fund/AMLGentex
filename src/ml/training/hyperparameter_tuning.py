@@ -41,6 +41,12 @@ class HyperparamTuner():
                 utility_metric += results[client].get('utility_metric') / len(results)
             self.utility_metric = utility_metric
 
+        if self.params.get('save_fpr', False) is True:
+            fpr = 0.0
+            for client in results:
+                fpr += results[client].get('fpr', 0.0) / len(results)
+            self.fpr = fpr
+
         if self.params.get('save_feature_importances_error', False) is True:
             feature_importances_error = 0.0
             for client in results:
